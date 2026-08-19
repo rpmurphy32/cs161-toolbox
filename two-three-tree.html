@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2–3 Tree Insertion Stepper: CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0E1116}
+  body{color:#DDE3EC;-webkit-font-smoothing:antialiased;
+    font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  button:focus-visible,input:focus-visible{outline:2px solid #4FB8E8;outline-offset:2px}
+  input[type=number]{-moz-appearance:textfield}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+"use strict";
+
+/* ---------- palette (matches the AVL / splay steppers) ---------- */
+const C = {
+  bg: "#0E1116",
+  panel: "#161B24",
+  panel2: "#1D2430",
+  line: "#2A3441",
+  ink: "#DDE3EC",
+  dim: "#7A8799",
+  edge: "#3A4553",
+  four: "#F0776C", // illegal 4-node
+  split: "#F4B740", // node just split out
+  target: "#4FB8E8", // leaf we're inserting into
+  ok: "#5FD08A",
+  root: "#B58BF5",
+};
+
+/* ---------- 2-3 tree core ---------- */
+let ID = 0;
+const nid = () => ++ID;
+const node = (values, children = []) => {
+  const n = { values, children, parent: null, id: nid() };
+  children.forEach((c) => (c.parent = n));
+  return n;
+};
+
+const isLeaf = (n) => n.children.length === 0;
+
+/** which child index value v belongs in */
+function childIndex(n, v) {
+  for (let i = 0; i < n.values.length; i++) if (v < n.values[i]) return i;
+  return n.values.length;
+}
+
+function descend(root, v) {
+  const path = [];
+  let c = root;
+  while (c) {
+    path.push(c);
+    if (c.values.includes(v)) return { path, found: true, leaf: c };
+    if (isLeaf(c)) return { path, found: false, leaf: c };
+    c = c.children[childIndex(c, v)];
+  }
+  return { path, found: false, leaf: null };
+}
+
+function addToNode(n, v) {
+  n.values.push(v);
+  n.values.sort((a, b) => a - b);
+}
+
+/** split a 4-node (3 values) into a 2-node whose children are the two halves */
+function splitNode(tree, n) {
+  const [a, b, c] = n.values;
+  const kids = n.children;
+  const left = node([a], kids.length ? [kids[0], kids[1]] : []);
+  const right = node([c], kids.length ? [kids[2], kids[3]] : []);
+  const mid = node([b], [left, right]);
+  const p = n.parent;
+  mid.parent = p;
+  if (!p) {
+    tree.root = mid;
+  } else {
+    const i = p.children.indexOf(n);
+    p.children[i] = mid;
+  }
+  return mid;
+}
+
+/** absorb a split-out 2-node `mid` into its parent */
+function absorb(mid) {
+  const p = mid.parent;
+  const i = p.children.indexOf(mid);
+  p.values.push(mid.values[0]);
+  p.values.sort((a, b) => a - b);
+  p.children.splice(i, 1, mid.children[0], mid.children[1]);
+  mid.children.forEach((c) => (c.parent = p));
+}
+
+/** plain full insert, used to build a starting tree */
+function insert23(tree, v) {
+  if (!tree.root) {
+    tree.root = node([v]);
+    return;
+  }
+  const { leaf, found } = descend(tree.root, v);
+  if (found) return;
+  addToNode(leaf, v);
+  let cur = leaf;
+  while (cur.values.length === 3) {
+    const mid = splitNode(tree, cur);
+    if (!mid.parent) break;
+    const p = mid.parent;
+    absorb(mid);
+    cur = p;
+  }
+}
+
+const ser = (n) =>
+  n ? { values: [...n.values], id: n.id, children: n.children.map(ser) } : null;
+
+/* ---------- step builder ---------- */
+function buildSteps(startValues, v) {
+  const tree = { root: null };
+  startValues.forEach((x) => insert23(tree, x));
+
+  const steps = [];
+  const push = (title, detail, hl, tag, kind) =>
+    steps.push({ tree: ser(tree.root), title, detail, hl: hl || {}, tag: tag || null, kind: kind || null });
+
+  push(
+    "Starting 2–3 tree",
+    "All leaves at the same level. Every node holds 1 value (2-node) or 2 values (3-node), and every non-leaf has exactly one more child than values.",
+    {}
+  );
+
+  if (!tree.root) {
+    tree.root = node([v]);
+    push(`Inserted ${v}`, "Empty tree. The new value becomes the root.", { target: tree.root.id }, null, "add-leaf");
+    return steps;
+  }
+
+  const { leaf, found } = descend(tree.root, v);
+  if (found) {
+    push(`${v} is already in the tree`, "No duplicates in this class, so insertion stops.", { target: leaf.id }, null, "descend");
+    return steps;
+  }
+
+  push(
+    `Descend to the correct leaf`,
+    `${v} belongs in the leaf holding ${leaf.values.join(", ")}. Insertion always starts by finding the right leaf, exactly like a BST.`,
+    { target: leaf.id },
+    null,
+    "descend"
+  );
+
+  addToNode(leaf, v);
+  if (leaf.values.length < 3) {
+    push(
+      `Placed ${v} in the leaf`,
+      `The leaf now holds ${leaf.values.join(", ")}, still a legal ${leaf.values.length === 1 ? "2-node" : "3-node"}. Nothing else to fix.`,
+      { target: leaf.id },
+      null,
+      "add-leaf"
+    );
+    push("Done", "No split needed. Balance was never disturbed.", {}, null, "done");
+    return steps;
+  }
+
+  push(
+    `Placed ${v}. This leaf is now a 4-NODE`,
+    `${leaf.values.join(", ")} is three values in one node, which is illegal. Fix it by SPLITTING: pull the middle value (${leaf.values[1]}) up.`,
+    { four: leaf.id },
+    "4-NODE",
+    "four-node"
+  );
+
+  let cur = leaf;
+  while (cur.values.length === 3) {
+    const midVal = cur.values[1];
+    const mid = splitNode(tree, cur);
+
+    if (!mid.parent) {
+      push(
+        `Split the root: ${midVal} pulled up`,
+        `There is no parent to absorb into, so the split node becomes the new root. The tree gains a level, and every leaf deepens at once, so perfect balance is preserved. This is the ONLY way a 2–3 tree grows taller.`,
+        { split: mid.id, root: mid.id },
+        "SPLIT (root)",
+        "root-split"
+      );
+      break;
+    }
+
+    push(
+      `Split: ${midVal} pulled up`,
+      `The 4-node became three nodes. But ${midVal} now sits one level too deep, so its leaves are deeper than their siblings. Balance is broken. Fix it by ABSORBING ${midVal} into its parent.`,
+      { split: mid.id },
+      "SPLIT",
+      "split"
+    );
+
+    const p = mid.parent;
+    const pi = p.children.indexOf(mid);
+    const posWord = pi === 0 ? "left" : pi === p.children.length - 1 ? "right" : "middle";
+    absorb(mid);
+
+    push(
+      `Absorbed ${midVal} into its parent (from the ${posWord})`,
+      `The parent now holds ${p.values.join(", ")} and took over both of ${midVal}'s children. Balance restored. ${
+        p.values.length === 3
+          ? "But the parent is now a 4-node itself. Split again."
+          : "The parent is a legal " + (p.values.length === 1 ? "2-node" : "3-node") + ", so we stop."
+      }`,
+      p.values.length === 3 ? { four: p.id } : { split: p.id },
+      p.values.length === 3 ? "4-NODE" : "ABSORB",
+      p.values.length === 3 ? "absorb-overflow" : "absorb"
+    );
+
+    cur = p;
+  }
+
+  push("Done", `Valid 2–3 tree. Loop: make a 4-node → split it. A child splits → absorb it. Nothing else.`, {}, null, "done");
+  return steps;
+}
+
+/* ---------- layout ---------- */
+const SLOT = 30,
+  PADX = 10,
+  GAP = 22,
+  LEVEL = 74,
+  NH = 30;
+
+function measure(n) {
+  if (!n) return 0;
+  const own = n.values.length * SLOT + PADX * 2;
+  if (!n.children.length) {
+    n._w = own;
+    return own;
+  }
+  let cw = 0;
+  n.children.forEach((c) => (cw += measure(c)));
+  cw += (n.children.length - 1) * GAP;
+  n._w = Math.max(own, cw);
+  return n._w;
+}
+
+function place(n, x, y) {
+  if (!n) return;
+  n._y = y;
+  n._own = n.values.length * SLOT + PADX * 2;
+  if (!n.children.length) {
+    n._x = x + n._w / 2;
+    return;
+  }
+  const total = n.children.reduce((s, c) => s + c._w, 0) + (n.children.length - 1) * GAP;
+  let cx = x + (n._w - total) / 2;
+  n.children.forEach((c) => {
+    place(c, cx, y + LEVEL);
+    cx += c._w + GAP;
+  });
+  n._x = (n.children[0]._x + n.children[n.children.length - 1]._x) / 2;
+}
+
+function flatten(n, out = []) {
+  if (!n) return out;
+  out.push(n);
+  n.children.forEach((c) => flatten(c, out));
+  return out;
+}
+
+/* ---------- dom helpers (mk / h / S) ---------- */
+const SVGNS = "http://www.w3.org/2000/svg";
+function mk(ns, tag, props, kids){
+  const e = ns ? document.createElementNS(ns, tag) : document.createElement(tag);
+  props = props || {};
+  for (const k in props){
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.setAttribute("class", v);
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c){
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+const h = (tag, props, kids) => mk(null, tag, props, kids);
+const S = (tag, props, kids) => mk(SVGNS, tag, props, kids);
+
+/* ---------- view helpers ---------- */
+function btn(label, opts){
+  opts = opts || {};
+  const disabled = !!opts.disabled, primary = !!opts.primary;
+  return h("button", {
+    disabled: disabled ? "disabled" : null,
+    onclick: disabled ? null : opts.onClick,
+    style: {
+      background: disabled ? C.panel2 : primary ? C.ink : C.panel2,
+      color: disabled ? C.dim : primary ? C.bg : C.ink,
+      border: `1px solid ${disabled ? C.line : primary ? C.ink : C.line}`,
+      borderRadius: "6px",
+      padding: "8px 14px",
+      fontSize: "13px",
+      fontWeight: "600",
+      cursor: disabled ? "not-allowed" : "pointer",
+      fontFamily: "inherit",
+    },
+  }, label);
+}
+
+function legend(c, t){
+  return h("span", { style: { display: "inline-flex", alignItems: "center", gap: "5px" } }, [
+    h("span", { style: { width: "9px", height: "9px", borderRadius: "2px", background: c, display: "inline-block" } }),
+    t,
+  ]);
+}
+
+/* ---------- pseudocode panel (original paraphrase, step-synced) ---------- */
+const CODE = [
+  "walk down to the leaf where the value belongs (never insert mid-tree)",
+  "add the value to that leaf",
+  "while any node holds three values, it is temporarily too fat:",
+  "    split it: the middle value moves up on its own,",
+  "    and the two outer values become two separate nodes",
+  "    the parent absorbs the promoted value (and its two children)",
+  "    if the parent is now too fat, loop around and split it as well",
+  "a root split adds the only new level, so all leaves stay at the same depth",
+];
+const CODE_HILITE = {
+  descend: [0],
+  "add-leaf": [1],
+  "four-node": [1, 2],
+  split: [3, 4],
+  absorb: [5],
+  "absorb-overflow": [5, 6],
+  "root-split": [7],
+  done: [2],
+};
+
+const TAG_TINT = { "4-NODE": C.four, SPLIT: C.split, "SPLIT (root)": C.root, ABSORB: C.ok };
+const TAG_RULE = {
+  "4-NODE": "three values in one node: illegal, split it",
+  SPLIT: "pull the middle value up: this breaks balance",
+  "SPLIT (root)": "no parent to absorb into: the tree gains a level",
+  ABSORB: "glue the split node into its parent: balance restored",
+};
+
+/* TreeView -> returns an SVG node (or an "empty" div) */
+function treeView(root, hl, canvasW, canvasH){
+  const CW = Math.max(canvasW || 1, 1), CH = Math.max(canvasH || 1, 1);
+  if (!root) return S("svg", { width: CW, height: CH }, []);
+  const laid = JSON.parse(JSON.stringify(root));
+  measure(laid);
+  place(laid, 0, 0);
+
+  const all = flatten(laid);
+  const W = laid._w + 40;
+  const dx = Math.max(0, (CW - W) / 2);
+
+  const colorOf = (id) =>
+    hl.four === id ? C.four : hl.split === id ? C.split : hl.target === id ? C.target : null;
+
+  const edges = [];
+  all.forEach((n) => n.children.forEach((c) => {
+    edges.push(S("line", {
+      x1: n._x + 20, y1: n._y + NH, x2: c._x + 20, y2: c._y,
+      stroke: C.edge, "stroke-width": "1.5",
+    }));
+  }));
+
+  const nodes = all.map((n) => {
+    const col = colorOf(n.id);
+    const w = n._own;
+    const x = n._x - w / 2 + 20;
+    return S("g", {}, [
+      S("rect", {
+        x, y: n._y, width: w, height: NH, rx: 5,
+        fill: col ? col : C.panel2, stroke: col ? col : C.line,
+        "stroke-width": col ? 2.5 : 1.5,
+      }),
+      n.values.map((val, i) => S("g", {}, [
+        i > 0 ? S("line", {
+          x1: x + PADX + i * SLOT - SLOT / 2 + SLOT / 2, y1: n._y + 5,
+          x2: x + PADX + i * SLOT - SLOT / 2 + SLOT / 2, y2: n._y + NH - 5,
+          stroke: col ? "#0E1116" : C.line, "stroke-width": "1", opacity: "0.5",
+        }) : null,
+        S("text", {
+          x: x + PADX + i * SLOT + SLOT / 2 - SLOT / 2 + SLOT / 2,
+          y: n._y + NH / 2 + 4, "text-anchor": "middle",
+          "font-size": 13, "font-weight": "600",
+          fill: col ? "#0E1116" : C.ink,
+          "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace",
+        }, val),
+      ])),
+    ]);
+  });
+
+  return S("svg", { width: CW, height: CH, style: { overflow: "visible" } },
+    S("g", { transform: `translate(${dx}, 0)` }, [...edges, ...nodes]));
+}
+
+/* fixed canvas: the max tree extent over ALL steps of the current trace, so the
+   drawing area never resizes while stepping (it only changes on a new tree). */
+function computeCanvas(steps){
+  let W = 1, H = 1;
+  for (const st of steps){
+    if (!st || !st.tree) continue;
+    const laid = JSON.parse(JSON.stringify(st.tree));
+    measure(laid); place(laid, 0, 0);
+    const all = flatten(laid);
+    const w = laid._w + 40;
+    const hh = Math.max(...all.map((n) => n._y)) + NH + 20;
+    if (w > W) W = w;
+    if (hh > H) H = hh;
+  }
+  return { W, H };
+}
+
+/* ---------- state + render ---------- */
+const state = {
+  size: 7,
+  values: [10, 20, 30, 40, 50, 60, 70],
+  target: "35",
+  steps: [],
+  i: 0,
+  canvasW: 1,
+  canvasH: 1,
+  playing: false,
+  speed: 4,
+};
+let playTimer = null;
+
+function randomTree(n){
+  const pool = [];
+  while (pool.length < n) {
+    const v = Math.floor(Math.random() * 90) + 10;
+    if (!pool.includes(v)) pool.push(v);
+  }
+  state.values = pool;
+  let t;
+  do {
+    t = Math.floor(Math.random() * 90) + 10;
+  } while (pool.includes(t));
+  state.target = String(t);
+  state.steps = buildSteps(pool, t);
+  const cv = computeCanvas(state.steps); state.canvasW = cv.W; state.canvasH = cv.H;
+  state.i = 0;
+  state.playing = false; /* rebuilds without an explicit Run never auto-play */
+  render();
+}
+
+function buildTrace(){
+  state.steps = buildSteps(state.values, Number(state.target));
+  const cv = computeCanvas(state.steps); state.canvasW = cv.W; state.canvasH = cv.H;
+  state.i = 0;
+}
+
+function run(){
+  buildTrace();
+  state.playing = true; /* Run auto-plays the whole trace from step 0 */
+  render();
+}
+
+function render(){
+  /* clear any pending auto-play tick so timers never stack */
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  const steps = state.steps;
+  const i = state.i;
+  const step = steps[i];
+  const tint = step && step.tag ? TAG_TINT[step.tag] : null;
+
+  /* auto-play: advance one step per tick, stop at the end */
+  if (state.playing) {
+    if (i >= steps.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.i += 1; render(); }, 1000 - state.speed * 88);
+  }
+
+  /* --- header --- */
+  const header = h("div", { style: { marginBottom: "16px" } }, [
+    h("div", { style: { fontSize: "19px", fontWeight: "700", letterSpacing: "-0.2px" } }, "2–3 tree insertion stepper"),
+    h("div", { style: { color: C.dim, fontSize: "13px", marginTop: "3px" } },
+      "Split and absorb, one operation at a time. Arrow keys step."),
+  ]);
+
+  /* --- controls --- */
+  const sizeLabelSpan = h("span", { class: "mono", style: { color: C.ink, width: "18px" } }, String(state.size));
+  const controls = h("div", {
+    style: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: "10px", padding: "14px",
+      display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" },
+  }, [
+    btn("New random tree", { onClick: () => randomTree(state.size) }),
+    h("label", { style: { fontSize: "12px", color: C.dim, display: "flex", alignItems: "center", gap: "7px" } }, [
+      "values",
+      h("input", { type: "range", min: "3", max: "16", value: String(state.size), style: { width: "90px" },
+        oninput: (e) => { state.size = Number(e.target.value); sizeLabelSpan.textContent = String(state.size); } }),
+      sizeLabelSpan,
+    ]),
+    h("div", { style: { width: "1px", height: "26px", background: C.line } }),
+    h("span", { style: { fontSize: "13px", color: C.dim } }, "insert"),
+    h("input", {
+      type: "number", value: state.target,
+      oninput: (e) => { state.target = e.target.value; },
+      style: { background: C.panel2, color: C.ink, border: `1px solid ${C.line}`, borderRadius: "6px",
+        padding: "8px 10px", width: "74px", fontSize: "13px", fontFamily: "ui-monospace, monospace" },
+    }),
+    btn("Run", { primary: true, onClick: run }),
+    h("div", { class: "mono", style: { marginLeft: "auto", fontSize: "11px", color: C.dim } },
+      state.values.slice().sort((a, b) => a - b).join(" ")),
+  ]);
+
+  /* --- tag banner --- */
+  const banner = h("div", {
+    style: { background: tint ? `${tint}1A` : C.panel, border: `1px solid ${tint || C.line}`,
+      borderRadius: "10px", padding: "12px 16px", marginBottom: "14px", display: "flex",
+      alignItems: "center", gap: "14px", flexWrap: "wrap", minHeight: "58px" },
+  }, step && step.tag ? [
+    h("div", { class: "mono", style: { fontWeight: "700", fontSize: "15px", letterSpacing: "1px", color: tint } }, step.tag),
+    h("div", { style: { width: "1px", height: "22px", background: C.line } }),
+    h("div", { style: { fontSize: "13px", fontWeight: "600" } }, TAG_RULE[step.tag]),
+  ] : h("div", { class: "mono", style: { fontSize: "13px", color: C.dim } }, "(no split or absorb at this step)"));
+
+  /* --- tree --- */
+  const treeCard = h("div", {
+    style: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: "10px", padding: "24px 14px",
+      marginBottom: "14px", display: "flex", justifyContent: "center", overflowX: "auto" },
+  }, step ? treeView(step.tree, step.hl, state.canvasW, state.canvasH) : null);
+
+  /* --- nav + step info --- */
+  const navCard = h("div", { style: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: "10px", padding: "14px" } }, [
+    h("div", { style: { display: "flex", gap: "10px", alignItems: "center", marginBottom: "10px", flexWrap: "wrap" } }, [
+      btn(state.playing ? "Pause" : "Play", { primary: true, onClick: () => {
+        if (state.playing) { state.playing = false; render(); return; }
+        if (state.i >= steps.length - 1) state.i = 0; /* Play at the end restarts */
+        state.playing = true;
+        render();
+      } }),
+      btn("← Prev", { disabled: i === 0, onClick: () => { state.playing = false; state.i = Math.max(0, i - 1); render(); } }),
+      btn("Next →", { primary: true, disabled: i >= steps.length - 1, onClick: () => { state.playing = false; state.i = Math.min(steps.length - 1, i + 1); render(); } }),
+      h("div", { class: "mono", style: { fontSize: "12px", color: C.dim } }, `step ${steps.length ? i + 1 : 0} / ${steps.length}`),
+      h("label", { style: { fontSize: "12px", color: C.dim, display: "flex", alignItems: "center", gap: "7px" } }, [
+        "speed",
+        h("input", { type: "range", min: "1", max: "10", value: String(state.speed), style: { width: "90px" },
+          oninput: (e) => { state.speed = Number(e.target.value); } }),
+      ]),
+      h("div", { style: { marginLeft: "auto", display: "flex", gap: "12px", fontSize: "11px", color: C.dim, flexWrap: "wrap" } }, [
+        legend(C.target, "target leaf"),
+        legend(C.four, "4-node (illegal)"),
+        legend(C.split, "split out"),
+      ]),
+    ]),
+    step ? h("div", { style: { minHeight: "96px" } }, [
+      h("div", { style: { fontWeight: "700", fontSize: "14px", marginBottom: "4px" } }, step.title),
+      h("div", { style: { fontSize: "13px", color: C.dim, lineHeight: "1.55" } }, step.detail),
+    ]) : null,
+  ]);
+
+  /* --- pseudocode panel --- */
+  const hlLines = (step && step.kind && CODE_HILITE[step.kind]) || [];
+  const codeCard = h("div", {
+    style: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: "10px",
+      padding: "14px", marginTop: "14px" },
+  }, [
+    h("div", { style: { fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.06em",
+      color: C.dim, marginBottom: "8px" } }, "The algorithm in words"),
+    h("div", { style: { overflowX: "auto" } }, CODE.map((l, k) => {
+      const on = hlLines.includes(k);
+      return h("div", {
+        class: "mono",
+        style: { whiteSpace: "pre", fontSize: "12.5px", lineHeight: "1.7", padding: "1px 8px",
+          background: on ? "rgba(240,167,60,0.14)" : "transparent",
+          borderLeft: on ? "3px solid #F0A73C" : "3px solid transparent",
+          color: on ? C.ink : C.dim, fontWeight: on ? "600" : "400" },
+      }, l);
+    })),
+  ]);
+
+  /* --- footer notes --- */
+  const notes = h("div", { style: { marginTop: "14px", fontSize: "12px", color: C.dim, lineHeight: "1.7" } }, [
+    h("strong", { style: { color: C.ink } }, "The whole loop:"), " make a 4-node → split it. A child splits → absorb it.",
+    h("br"),
+    h("strong", { style: { color: C.ink } }, "Split breaks balance, absorb restores it."),
+    " Absorbing into a 3-node makes a new 4-node, which you then split. That is the cascade.",
+    h("br"),
+    h("strong", { style: { color: C.ink } }, "Only a root split adds a level"),
+    ", and all leaves deepen together, so perfect balance survives. 2–3 trees grow at the root; AVL trees grow at the leaves.",
+    h("br"),
+    h("strong", { style: { color: C.ink } }, "You always absorb a 2-node"),
+    " (splitting always produces one), but you may absorb into a 2-node or a 3-node, from the left, middle, or right.",
+  ]);
+
+  const inner = h("div", { style: { maxWidth: "980px", margin: "0 auto" } }, [header, controls, banner, treeCard, navCard, codeCard, notes]);
+  const page = h("div", {
+    style: { background: C.bg, color: C.ink, minHeight: "100vh", padding: "20px 18px 32px",
+      fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" },
+  }, inner);
+
+  const rootEl = document.getElementById("root");
+  rootEl.textContent = "";
+  rootEl.appendChild(page);
+}
+
+/* keyboard stepping */
+window.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight") { state.playing = false; state.i = Math.min(state.i + 1, state.steps.length - 1); render(); }
+  if (e.key === "ArrowLeft") { state.playing = false; state.i = Math.max(state.i - 1, 0); render(); }
+});
+
+buildTrace(); /* initial page load shows the trace without auto-playing; only Run starts playback */
+render();
+</script>
+</body>
+</html>

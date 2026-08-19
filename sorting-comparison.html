@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sorting Comparison: Selection · Insertion · Merge · CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0B1120}
+  .page{min-height:100vh;padding:24px 16px;background:#0B1120;color:#E6EDF7;
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;margin:4px 0 0;color:#8194B0}
+  .card{background:#151E31;border:1px solid #2A3752;border-radius:12px;padding:14px}
+  .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;
+    border:1px solid #2A3752;background:transparent;color:#E6EDF7;cursor:pointer;
+    transition:opacity .15s,background .15s,border-color .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible{outline:2px solid #5B8DEF;outline-offset:2px}
+  input[type=range]{accent-color:#5B8DEF}
+  .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#8194B0}
+  .stat{background:#151E31;border:1px solid #2A3752;border-radius:8px;padding:12px 16px;flex:1 1 140px}
+  .bars{display:flex;align-items:flex-end;gap:4px;height:200px;border-bottom:1px solid #2A3752;padding-bottom:8px}
+  .bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end}
+  .barfill{width:100%;border-radius:3px 3px 0 0;transition:height .15s ease, background .15s ease}
+  @media (prefers-reduced-motion: reduce){.barfill{transition:none}.btn{transition:none}}
+</style>
+</head>
+<body>
+<div id="root" class="page"></div>
+<script>
+"use strict";
+/* ------------------------------------------------------------- palette */
+const C = { bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B", def:"#3A4763",
+  dim:"#10192B", onDark:"#0B1120", code:"#A7B6CE" };
+
+/* ------------------------------------------------------- step generators */
+const N = 16;
+const rand = () => Math.floor(Math.random() * 90) + 10;
+const newArray = () => Array.from({ length: N }, rand);
+
+const COMPLEXITY = { selection: "Θ(n²)", insertion: "Θ(n²)", merge: "Θ(n log n)" };
+const WRITE_LABEL = { selection: "Swaps", insertion: "Swaps", merge: "Element placements" };
+
+function genSelection(a) {
+  const s = [], arr = a.slice(), sorted = new Set();
+  for (let i = 0; i < arr.length - 1; i++) {
+    let min = i;
+    for (let j = i + 1; j < arr.length; j++) {
+      s.push({ arr: arr.slice(), cmp: [min, j], key: [i], sorted: new Set(sorted), pc: 0, msg: `Comparing index ${j} with current min (index ${min})`, c: 1, w: 0 });
+      if (arr[j] < arr[min]) min = j;
+    }
+    [arr[i], arr[min]] = [arr[min], arr[i]];
+    s.push({ arr: arr.slice(), cmp: [], key: [i, min], sorted: new Set(sorted), pc: 1,
+      msg: min === i ? `Swap arr[${i}] with itself - the minimum was already there` : `Swapped min into position ${i}`, c: 0, w: 1 });
+    sorted.add(i);
+    s.push({ arr: arr.slice(), cmp: [], key: [], sorted: new Set(sorted), pc: 2, msg: `Position ${i} locked`, c: 0, w: 0 });
+  }
+  sorted.add(arr.length - 1);
+  s.push({ arr: arr.slice(), cmp: [], key: [], sorted: new Set(sorted), pc: 3, msg: "Sorted", c: 0, w: 0 });
+  return s;
+}
+
+function genInsertion(a) {
+  const s = [], arr = a.slice(), sorted = new Set([0]);
+  for (let i = 1; i < arr.length; i++) {
+    let j = i;
+    s.push({ arr: arr.slice(), cmp: [], key: [i], sorted: new Set(sorted), pc: 0, msg: `Take ${arr[i]}: swap it left while smaller than its neighbor`, c: 0, w: 0 });
+    while (j > 0 && arr[j] < arr[j - 1]) {
+      s.push({ arr: arr.slice(), cmp: [j - 1, j], key: [], sorted: new Set(sorted), pc: 1, msg: `${arr[j]} < ${arr[j - 1]}, swap`, c: 1, w: 1 });
+      const t = arr[j]; arr[j] = arr[j - 1]; arr[j - 1] = t;
+      j--;
+    }
+    if (j > 0) s.push({ arr: arr.slice(), cmp: [j - 1, j], key: [], sorted: new Set(sorted), pc: 2, msg: `${arr[j]} ≥ ${arr[j - 1]}, stop swapping`, c: 1, w: 0 });
+    sorted.add(i);
+    s.push({ arr: arr.slice(), cmp: [], key: [j], sorted: new Set(sorted), pc: 2, msg: `${arr[j]} settled at index ${j}`, c: 0, w: 0 });
+  }
+  s.push({ arr: arr.slice(), cmp: [], key: [], sorted: new Set(arr.map((_, i) => i)), pc: 3, msg: "Sorted", c: 0, w: 0 });
+  return s;
+}
+
+function genMerge(a) {
+  const s = [], arr = a.slice();
+  function merge(lo, mid, hi) {
+    const L = arr.slice(lo, mid + 1), R = arr.slice(mid + 1, hi + 1);
+    let i = 0, j = 0, k = lo;
+    while (i < L.length && j < R.length) {
+      s.push({ arr: arr.slice(), cmp: [lo + i, mid + 1 + j], key: [], range: [lo, hi], sorted: new Set(), pc: 1, msg: `Merging [${lo}..${hi}]: compare ${L[i]} vs ${R[j]}`, c: 1, w: 0 });
+      if (L[i] <= R[j]) arr[k] = L[i++]; else arr[k] = R[j++];
+      s.push({ arr: arr.slice(), cmp: [], key: [k], range: [lo, hi], sorted: new Set(), pc: 1, msg: `Write ${arr[k]} to index ${k}`, c: 0, w: 1 });
+      k++;
+    }
+    while (i < L.length) { arr[k] = L[i]; s.push({ arr: arr.slice(), cmp: [], key: [k], range: [lo, hi], sorted: new Set(), pc: 2, msg: `Copy remaining ${L[i]} to index ${k}`, c: 0, w: 1 }); i++; k++; }
+    while (j < R.length) { arr[k] = R[j]; s.push({ arr: arr.slice(), cmp: [], key: [k], range: [lo, hi], sorted: new Set(), pc: 2, msg: `Copy remaining ${R[j]} to index ${k}`, c: 0, w: 1 }); j++; k++; }
+  }
+  function sort(lo, hi) {
+    if (lo >= hi) return;
+    const mid = Math.floor((lo + hi) / 2);
+    s.push({ arr: arr.slice(), cmp: [], key: [], range: [lo, hi], sorted: new Set(), pc: 0, msg: `Split [${lo}..${hi}] at ${mid}`, c: 0, w: 0 });
+    sort(lo, mid); sort(mid + 1, hi); merge(lo, mid, hi);
+  }
+  sort(0, arr.length - 1);
+  s.push({ arr: arr.slice(), cmp: [], key: [], sorted: new Set(arr.map((_, i) => i)), pc: 3, msg: "Sorted", c: 0, w: 0 });
+  return s;
+}
+
+const GENS = { selection: genSelection, insertion: genInsertion, merge: genMerge };
+
+/* ------------------------------------------------- pseudocode (original paraphrase) */
+const PSEUDO = {
+  selection: [
+    "scan the suffix for its min",
+    "swap the min to the front",
+    "lock that slot; repeat",
+    "all slots locked: sorted",
+  ],
+  insertion: [
+    "take the next unsorted one",
+    "walk it left, swap by swap",
+    "stop where it fits",
+    "all entries placed: sorted",
+  ],
+  merge: [
+    "sort each half of the range",
+    "keep taking the smaller front",
+    "half empty: pour the rest in",
+    "one run remains: sorted",
+  ],
+};
+
+/* --------------------------------------------------------------- dom help */
+function h(tag, props, kids){
+  const e = document.createElement(tag);
+  props = props || {};
+  for (const k in props){
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.setAttribute("class", v);
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c){
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+
+/* --------------------------------------------------------------- state */
+const state = { base: newArray(), algo: "selection", idx: 0, playing: false, speed: 5 };
+
+let cache = { key: null, steps: null };
+function getSteps(){
+  const key = state.algo + "|" + state.base.join(",");
+  if (cache.key === key) return cache.steps;
+  const steps = GENS[state.algo](state.base);
+  cache = { key, steps };
+  return steps;
+}
+
+const ALGOS = ["selection", "insertion", "merge"];
+let playTimer = null;
+
+function render(){
+  if (playTimer){ clearTimeout(playTimer); playTimer = null; }
+  const steps = getSteps();
+  if (state.idx > steps.length - 1) state.idx = steps.length - 1;
+  if (state.idx < 0) state.idx = 0;
+  const st = steps[state.idx];
+
+  if (state.playing){
+    if (state.idx >= steps.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.idx += 1; render(); }, 850 - state.speed * 78);
+  }
+
+  // running totals
+  let tc = 0, tw = 0;
+  for (let k = 0; k <= state.idx; k++){ tc += steps[k].c; tw += steps[k].w; }
+
+  const inRange = (i) => !st.range || (i >= st.range[0] && i <= st.range[1]);
+
+  /* header */
+  const header = h("div", { style: { marginBottom: "14px" } }, [
+    h("h1", {}, "Sorting, side by side"),
+    h("p", { class: "sub" }, "Watch selection, insertion, and merge sort run on the same array. Count the comparisons each one pays (write/swap counts are defined per algorithm)."),
+  ]);
+
+  /* algo selector */
+  const selector = h("div", { class: "row", style: { marginBottom: "14px" } },
+    ALGOS.map((a) => h("button", {
+      class: "btn",
+      style: { borderColor: state.algo === a ? C.green : C.line,
+        color: state.algo === a ? C.green : C.ink,
+        fontWeight: state.algo === a ? 600 : 500 },
+      onclick: () => { state.algo = a; state.idx = 0; state.playing = false; render(); },
+    }, a[0].toUpperCase() + a.slice(1) + " sort")));
+
+  /* bar chart */
+  const bars = h("div", { class: "bars" }, st.arr.map((v, i) => {
+    let col = C.def;
+    if (st.sorted.has(i)) col = C.green;
+    if (st.key && st.key.includes(i)) col = C.blue;
+    if (st.cmp && st.cmp.includes(i)) col = C.amber;
+    if (state.algo === "merge" && st.range && !inRange(i) && !st.sorted.has(i)) col = C.dim;
+    return h("div", { class: "bar" }, [
+      h("div", { class: "barfill", style: { height: (v * 1.6) + "px", background: col } }),
+      h("div", { class: "mono", style: { fontSize: "11px", color: C.mute } }, String(v)),
+    ]);
+  }));
+
+  const msg = h("div", { style: { fontSize: "14px", color: C.mute, minHeight: "44px", margin: "12px 0" } }, st.msg);
+
+  /* controls */
+  const controls = h("div", { class: "row", style: { marginBottom: "16px" } }, [
+    h("button", { class: "btn", onclick: () => {
+      if (state.playing) { state.playing = false; render(); return; }
+      if (state.idx >= steps.length - 1) state.idx = 0;
+      state.playing = true; render();
+    } }, state.playing ? "Pause" : "Play"),
+    h("button", { class: "btn", disabled: state.idx >= steps.length - 1 ? "disabled" : null,
+      onclick: () => { state.playing = false; if (state.idx < steps.length - 1) state.idx += 1; render(); } }, "Step"),
+    h("button", { class: "btn", onclick: () => { state.playing = false; state.idx = 0; render(); } }, "Reset"),
+    h("button", { class: "btn", onclick: () => { state.base = newArray(); state.idx = 0; state.playing = false; render(); } }, "New array"),
+    h("span", { class: "lbl", style: { marginLeft: "8px" } }, "Speed"),
+    h("input", { type: "range", min: "1", max: "10", value: String(state.speed), style: { width: "120px" },
+      oninput: (ev) => { state.speed = +ev.target.value; } }),
+    h("span", { style: { fontSize: "12px", color: C.mute, marginLeft: "auto" } }, "step " + (state.idx + 1) + " / " + steps.length),
+  ]);
+
+  /* stat tiles */
+  const tile = (label, val, mono) => h("div", { class: "stat" }, [
+    h("div", { class: "lbl", style: { marginBottom: "2px" } }, label),
+    h("div", { class: mono ? "mono" : null, style: { fontSize: "22px", fontWeight: 600 } }, val),
+  ]);
+  const stats = h("div", { class: "row", style: { gap: "12px" } }, [
+    tile("Comparisons", String(tc)),
+    tile(WRITE_LABEL[state.algo], String(tw)),
+    tile("Worst case", COMPLEXITY[state.algo], true),
+  ]);
+
+  /* compact pseudocode: one block per algorithm; the selected lane highlights its current line */
+  const codeBlock = (algo) => {
+    const active = state.algo === algo;
+    return h("div", { style: { flex: "1 1 210px", minWidth: "0", overflowX: "auto", opacity: active ? "1" : ".55" } }, [
+      h("div", { class: "lbl", style: { marginBottom: "6px", color: active ? C.green : C.mute } },
+        algo[0].toUpperCase() + algo.slice(1)),
+      PSEUDO[algo].map((l, k) => {
+        const on = active && st.pc === k;
+        return h("div", {
+          class: "mono",
+          style: {
+            whiteSpace: "pre", fontSize: "12.5px", lineHeight: "1.6", padding: "1px 6px",
+            background: on ? "rgba(240,167,60,0.14)" : "transparent",
+            borderLeft: "3px solid " + (on ? C.amber : "transparent"),
+            color: on ? C.ink : C.code, fontWeight: on ? 600 : 400,
+          },
+        }, l);
+      }),
+    ]);
+  };
+  const codeCard = h("div", { class: "card", style: { marginTop: "14px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "The algorithms in words"),
+    h("div", { style: { display: "flex", flexWrap: "wrap", gap: "14px" } }, ALGOS.map(codeBlock)),
+  ]);
+
+  const wrap = h("div", { class: "wrap" }, [
+    header, selector,
+    h("div", { class: "card" }, [bars, msg, controls, stats]),
+    codeCard,
+  ]);
+
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(wrap);
+}
+
+render();
+</script>
+</body>
+</html>

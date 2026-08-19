@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Splay Tree Stepper: CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0E1116}
+  #root{min-height:100vh}
+  input[type="range"]{accent-color:#F4B740}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #4FB8E8;outline-offset:2px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+/* ---------- palette ---------- */
+const C = {
+  bg: "#0E1116",
+  panel: "#161B24",
+  panel2: "#1D2430",
+  line: "#2A3441",
+  ink: "#DDE3EC",
+  dim: "#7A8799",
+  edge: "#3A4553",
+  x: "#F4B740", // node being splayed
+  p: "#4FB8E8", // parent
+  g: "#B58BF5", // grandparent
+  ok: "#5FD08A",
+  warn: "#F0776C",
+};
+
+/* ---------- tree core ---------- */
+let ID = 0;
+const nid = () => ++ID;
+const mk = (v) => ({ value: v, left: null, right: null, parent: null, id: nid() });
+
+function bstInsert(tree, v) {
+  const n = mk(v);
+  if (!tree.root) {
+    tree.root = n;
+    return n;
+  }
+  let c = tree.root;
+  for (;;) {
+    if (v < c.value) {
+      if (!c.left) {
+        c.left = n;
+        n.parent = c;
+        return n;
+      }
+      c = c.left;
+    } else if (v > c.value) {
+      if (!c.right) {
+        c.right = n;
+        n.parent = c;
+        return n;
+      }
+      c = c.right;
+    } else return c;
+  }
+}
+
+/** Rotate `node` up one level (a rotation performed AT node.parent). */
+function rotate(tree, node) {
+  const p = node.parent;
+  if (!p) return;
+  const g = p.parent;
+  if (p.left === node) {
+    p.left = node.right;
+    if (node.right) node.right.parent = p;
+    node.right = p;
+  } else {
+    p.right = node.left;
+    if (node.left) node.left.parent = p;
+    node.left = p;
+  }
+  p.parent = node;
+  node.parent = g;
+  if (!g) tree.root = node;
+  else if (g.left === p) g.left = node;
+  else g.right = node;
+}
+
+const ser = (n) =>
+  n ? { value: n.value, id: n.id, left: ser(n.left), right: ser(n.right) } : null;
+
+function findOrLast(tree, v) {
+  let c = tree.root,
+    last = null;
+  while (c) {
+    last = c;
+    if (v === c.value) return { node: c, found: true };
+    c = v < c.value ? c.left : c.right;
+  }
+  return { node: last, found: false };
+}
+
+const maxNode = (n) => {
+  while (n && n.right) n = n.right;
+  return n;
+};
+
+/* ---------- step builder ---------- */
+function buildSteps(initialValues, op, value) {
+  const tree = { root: null };
+  initialValues.forEach((v) => bstInsert(tree, v));
+
+  const steps = [];
+  const push = (trees, caseName, title, detail, hl, kind) =>
+    steps.push({ trees, caseName, title, detail, hl: hl || {}, kind: kind || null });
+  const one = (label) => [{ root: ser(tree.root), label }];
+
+  const splay = (x) => {
+    while (x.parent) {
+      const p = x.parent;
+      const g = p.parent;
+      const side = (c, par) => (par.left === c ? "left" : "right");
+
+      if (!g) {
+        push(one(), "ZIG", `${x.value} is a child of the root`, `No grandparent, so this is a zig, a single rotation at ${p.value}.`, { x: x.id, p: p.id });
+        rotate(tree, x);
+        push(one(), "ZIG", `Rotated at ${p.value}`, `${x.value} is now the root.`, { x: x.id });
+      } else if (side(x, p) === side(p, g)) {
+        push(one(), "ZIG-ZIG", `${x.value} is ${side(x, p)}-of-${side(p, g)} of ${g.value}`, `Straight path, so zig-zig. Rotate at the GRANDPARENT (${g.value}) first, then at the parent (${p.value}).`, { x: x.id, p: p.id, g: g.id });
+        rotate(tree, p);
+        push(one(), "ZIG-ZIG", `1 of 2: rotated at grandparent ${g.value}`, `${p.value} moved up past ${g.value}. ${x.value} is still below ${p.value}.`, { x: x.id, p: p.id, g: g.id });
+        rotate(tree, x);
+        push(one(), "ZIG-ZIG", `2 of 2: rotated at parent ${p.value}`, `${x.value} moved up. Result is a staircase: ${x.value} over ${p.value} over ${g.value}.`, { x: x.id, p: p.id, g: g.id });
+      } else {
+        push(one(), "ZIG-ZAG", `${x.value} is ${side(x, p)}-of-${side(p, g)} of ${g.value}`, `Bent path, so zig-zag. Rotate at the PARENT (${p.value}) first, then at the grandparent (${g.value}).`, { x: x.id, p: p.id, g: g.id });
+        rotate(tree, x);
+        push(one(), "ZIG-ZAG", `1 of 2: rotated at parent ${p.value}`, `${x.value} moved up past ${p.value}.`, { x: x.id, p: p.id, g: g.id });
+        rotate(tree, x);
+        push(one(), "ZIG-ZAG", `2 of 2: rotated at grandparent ${g.value}`, `${x.value} moved up again. Result is a fan: ${x.value} on top with ${p.value} and ${g.value} as its two children.`, { x: x.id, p: p.id, g: g.id });
+      }
+    }
+  };
+
+  push(one(), null, "Starting tree", `A plain BST. Splay trees have no balance invariant, so any BST shape is legal.`, {});
+
+  if (op === "insert") {
+    const before = tree.root ? findOrLast(tree, value) : null;
+    if (before && before.found) {
+      push(one(), null, `${value} is already in the tree`, `No duplicates in this class, so insertion stops. Splaying it anyway.`, { x: before.node.id }, "insert");
+      splay(before.node);
+    } else {
+      const n = bstInsert(tree, value);
+      push(one(), null, `Inserted ${value} as a leaf`, `Ordinary BST insertion, no balancing. Now splay the new node to the root.`, { x: n.id }, "insert");
+      splay(n);
+    }
+    push(one(), null, "Done", `${value} is at the root. Splay insert = normal BST insert, then splay.`, { x: tree.root.id }, "insert");
+  }
+
+  if (op === "search") {
+    const { node, found } = findOrLast(tree, value);
+    if (found) {
+      push(one(), null, `Found ${value}`, `Now splay it to the root. You already paid to walk down here, so make that work count.`, { x: node.id }, "search-found");
+    } else {
+      push(one(), null, `${value} is not in the tree`, `Search FAILED at ${node.value}, the last node visited. You must splay it anyway. Otherwise repeating this failed search can cost up to Θ(n) every time and the amortized bound collapses.`, { x: node.id }, "search-fail");
+    }
+    splay(node);
+    if (found) {
+      push(one(), null, "Done", `${value} is at the root, so searching for it again would now cost Θ(1).`, { x: tree.root.id }, "search-found");
+    } else {
+      push(one(), null, "Done", `The last node visited is now the root. A repeat of this exact search isn't necessarily cheap, but splaying on failures is what keeps the amortized O(log n) bound valid.`, { x: tree.root.id }, "search-fail");
+    }
+  }
+
+  if (op === "delete") {
+    const { node, found } = findOrLast(tree, value);
+    if (!found) {
+      push(one(), null, `${value} is not in the tree`, `Splaying the last node visited (${node.value}), then nothing is removed.`, { x: node.id }, "search-fail");
+      splay(node);
+      push(one(), null, "Done", `Nothing deleted.`, { x: tree.root.id }, "search-fail");
+    } else {
+      push(one(), null, `Step 1: splay ${value} to the root`, `Splay delete = splay, then split, then join.`, { x: node.id }, "delete-splay");
+      splay(node);
+      const root = tree.root;
+      const L = root.left,
+        R = root.right;
+      push(one(), null, `${value} is at the root`, `Now SPLIT: cut both children loose. The root value ${value} is discarded. That is the deletion.`, { x: root.id }, "delete-split");
+      if (L) L.parent = null;
+      if (R) R.parent = null;
+      const t1 = { root: L },
+        t2 = { root: R };
+      push(
+        [
+          { root: ser(L), label: `T₁  (everything < ${value})` },
+          { root: ser(R), label: `T₂  (everything > ${value})` },
+        ],
+        null,
+        `Step 2: split complete`,
+        `${value} is gone. Two independent trees remain, every value in T₁ smaller than every value in T₂.`,
+        {},
+        "delete-split"
+      );
+
+      if (!L) {
+        tree.root = R;
+        push(one(), null, "Step 3: join", `T₁ is empty, so T₂ becomes the whole tree.`, {}, "delete-join");
+      } else if (!R) {
+        tree.root = L;
+        push(one(), null, "Step 3: join", `T₂ is empty, so T₁ becomes the whole tree.`, {}, "delete-join");
+      } else {
+        const m = maxNode(L);
+        push(
+          [
+            { root: ser(L), label: `T₁: splay the max (${m.value}) to its root`},
+            { root: ser(R), label: "T₂: unchanged"},
+          ],
+          null,
+          `Step 3, join: splay max of T₁`,
+          `The max of T₁ is ${m.value}. Once splayed it has no right child, which is exactly the slot T₂ needs.`,
+          { x: m.id },
+          "delete-max"
+        );
+        // splay m within t1, snapshotting both trees
+        while (m.parent) {
+          const p = m.parent;
+          const g = p.parent;
+          const side = (c, par) => (par.left === c ? "left" : "right");
+          if (!g) {
+            rotate(t1, m);
+          } else if (side(m, p) === side(p, g)) {
+            rotate(t1, p);
+            rotate(t1, m);
+          } else {
+            rotate(t1, m);
+            rotate(t1, m);
+          }
+          push(
+            [
+              { root: ser(t1.root), label: "T₁: splaying max"},
+              { root: ser(R), label: "T₂" },
+            ],
+            null,
+            `Splaying ${m.value} in T₁`,
+            `Same three cases as before, applied inside T₁.`,
+            { x: m.id },
+            "delete-max"
+          );
+        }
+        m.right = R;
+        R.parent = m;
+        tree.root = m;
+        push(one(), null, "Step 4: attach T₂", `${m.value} had no right child, so T₂ hangs there. Join complete.`, { x: m.id }, "delete-attach");
+      }
+      push(one(), null, "Done", `${value} deleted. Splay delete = splay → split → join.`, {}, "delete-done");
+    }
+  }
+
+  return steps;
+}
+
+/* ---------- layout ---------- */
+function layout(root) {
+  const pos = {};
+  let i = 0,
+    maxD = 0;
+  (function walk(n, d) {
+    if (!n) return;
+    walk(n.left, d + 1);
+    pos[n.id] = { x: i++, y: d, value: n.value };
+    maxD = Math.max(maxD, d);
+    walk(n.right, d + 1);
+  })(root, 0);
+  const edges = [];
+  (function walk(n) {
+    if (!n) return;
+    if (n.left) {
+      edges.push([n.id, n.left.id]);
+      walk(n.left);
+    }
+    if (n.right) {
+      edges.push([n.id, n.right.id]);
+      walk(n.right);
+    }
+  })(root);
+  return { pos, edges, w: i, d: maxD + 1 };
+}
+
+/* ---------- fixed tree-area height across a trace (prevents layout jump while stepping) ---------- */
+function stepTreeHeight(step) {
+  if (!step || !step.trees) return 0;
+  const compact = step.trees.length > 1;
+  const GY = compact ? 54 : 64;
+  let maxH = 0;
+  step.trees.forEach((t) => {
+    const cellH = !t.root ? 72 : layout(t.root).d * GY + (t.label ? 17 : 0);
+    if (cellH > maxH) maxH = cellH;
+  });
+  return maxH;
+}
+
+/* ---------- pseudocode panel (original paraphrase, step-synced) ---------- */
+const CODE = [
+  "splay(x): pull x up to the root, two levels at a time",
+  "    child of the root: one rotation finishes it              (zig)",
+  "    straight line to grandparent: rotate grandparent, then parent   (zig-zig)",
+  "    bent line to grandparent: rotate parent, then grandparent       (zig-zag)",
+  "search(v): walk down like any BST, then splay the node found",
+  "    if the search fails, splay the last node visited instead",
+  "insert(v): ordinary BST insert at a leaf, then splay the new node",
+  "delete(v): splay v to the root, then detach its two subtrees",
+  "    splay the largest value of the left piece to that piece's root",
+  "    it now has no right child, so reattach the right piece there",
+];
+const CODE_HILITE = {
+  zig: [0, 1],
+  "zig-zig": [0, 2],
+  "zig-zag": [0, 3],
+  "search-found": [4],
+  "search-fail": [5],
+  insert: [6],
+  "delete-splay": [7],
+  "delete-split": [7],
+  "delete-max": [8],
+  "delete-join": [9],
+  "delete-attach": [9],
+  "delete-done": [7, 8, 9],
+};
+
+/* ---------- badges ---------- */
+const CASE_INFO = {
+  ZIG: { rule: "one rotation at the parent", tint: C.ok },
+  "ZIG-ZIG": { rule: "grandparent first, then parent", tint: C.x },
+  "ZIG-ZAG": { rule: "parent first, then grandparent", tint: C.g },
+};
+
+/* ---------- dom help ---------- */
+const SVGNS = "http://www.w3.org/2000/svg";
+function el(ns, tag, props, kids) {
+  const e = ns ? document.createElementNS(ns, tag) : document.createElement(tag);
+  props = props || {};
+  for (const k in props) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.setAttribute("class", v);
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+const h = (tag, props, kids) => el(null, tag, props, kids);
+const S = (tag, props, kids) => el(SVGNS, tag, props, kids);
+
+/* ---------- components ---------- */
+function Btn(label, onClick, opts) {
+  opts = opts || {};
+  const disabled = !!opts.disabled, primary = !!opts.primary;
+  return h("button", {
+    onclick: disabled ? null : onClick,
+    disabled: disabled ? "disabled" : null,
+    style: {
+      background: disabled ? C.panel2 : primary ? C.ink : C.panel2,
+      color: disabled ? C.dim : primary ? C.bg : C.ink,
+      border: "1px solid " + (disabled ? C.line : primary ? C.ink : C.line),
+      borderRadius: "6px",
+      padding: "8px 14px",
+      fontSize: "13px",
+      fontWeight: 600,
+      cursor: disabled ? "not-allowed" : "pointer",
+      fontFamily: "inherit",
+    },
+  }, label);
+}
+
+function Legend(c, t) {
+  return h("span", { style: { display: "inline-flex", alignItems: "center", gap: "5px" } }, [
+    h("span", { style: { width: "9px", height: "9px", borderRadius: "9px", background: c, display: "inline-block" } }),
+    t,
+  ]);
+}
+
+function treeView(root, label, hl, compact) {
+  if (!root)
+    return h("div", { style: { color: C.dim, fontSize: "13px", fontStyle: "italic", padding: "28px 0", textAlign: "center" } },
+      label ? `${label}: empty` : "empty");
+
+  const L = layout(root);
+  const GX = compact ? 40 : 52;
+  const GY = compact ? 54 : 64;
+  const R = compact ? 15 : 18;
+  const W = Math.max(L.w * GX, 120);
+  const H = L.d * GY;
+  const px = (id) => L.pos[id].x * GX + GX / 2;
+  const py = (id) => L.pos[id].y * GY + GY / 2;
+  const colorOf = (id) => (hl.x === id ? C.x : hl.p === id ? C.p : hl.g === id ? C.g : null);
+
+  const edgeEls = L.edges.map(([a, b]) =>
+    S("line", { x1: px(a), y1: py(a), x2: px(b), y2: py(b), stroke: C.edge, "stroke-width": 1.5 }));
+
+  const nodeEls = Object.keys(L.pos).map((idStr) => {
+    const id = Number(idStr);
+    const n = L.pos[id];
+    const c = colorOf(id);
+    return S("g", {}, [
+      S("circle", { cx: n.x * GX + GX / 2, cy: n.y * GY + GY / 2, r: R,
+        fill: c ? c : C.panel2, stroke: c ? c : C.line, "stroke-width": c ? 2.5 : 1.5 }),
+      S("text", { x: n.x * GX + GX / 2, y: n.y * GY + GY / 2 + 4, "text-anchor": "middle",
+        "font-size": compact ? 11 : 13, "font-weight": 600, fill: c ? "#0E1116" : C.ink,
+        "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace" }, String(n.value)),
+    ]);
+  });
+
+  return h("div", { style: { textAlign: "center" } }, [
+    label ? h("div", { style: { color: C.dim, fontSize: "11px", letterSpacing: "0.6px", marginBottom: "6px",
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } }, label) : null,
+    S("svg", { width: W, height: H, style: { overflow: "visible", maxWidth: "100%" } }, [...edgeEls, ...nodeEls]),
+  ]);
+}
+
+/* ---------- state + actions ---------- */
+const state = { size: 7, values: [50, 30, 70, 20, 40, 60, 80], op: "delete", target: 40, steps: [], i: 0, playing: false, speed: 4 };
+let playTimer = null;
+
+function randomTree(n) {
+  const pool = [];
+  while (pool.length < n) {
+    const v = Math.floor(Math.random() * 90) + 10;
+    if (!pool.includes(v)) pool.push(v);
+  }
+  state.values = pool;
+  state.steps = [];
+  state.i = 0;
+  state.playing = false;
+  state.target = pool[Math.floor(Math.random() * pool.length)];
+  render();
+}
+
+function buildTrace() {
+  state.steps = buildSteps(state.values, state.op, Number(state.target));
+  state.i = 0;
+  state.playing = false;
+}
+
+function run() {
+  buildTrace();
+  state.playing = true;
+  render();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (!state.steps.length) return;
+  if (e.key === "ArrowRight") { state.playing = false; state.i = Math.max(0, Math.min(state.i + 1, state.steps.length - 1)); render(); }
+  if (e.key === "ArrowLeft") { state.playing = false; state.i = Math.max(0, state.i - 1); render(); }
+});
+
+/* ---------- render ---------- */
+const inputStyle = {
+  background: C.panel2, color: C.ink, border: "1px solid " + C.line,
+  borderRadius: "6px", padding: "8px 10px", fontSize: "13px", fontFamily: "inherit",
+};
+
+function render() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  const step = state.steps[state.i];
+  const info = step && step.caseName ? CASE_INFO[step.caseName] : null;
+
+  if (state.playing) {
+    if (state.i >= state.steps.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.i += 1; render(); }, 1000 - state.speed * 88);
+  }
+  /* height the tree area to the tallest tree in this whole trace, so stepping never shifts the page */
+  const treeAreaH = state.steps.reduce((m, s) => Math.max(m, stepTreeHeight(s)), 0);
+
+  /* header */
+  const header = h("div", { style: { marginBottom: "16px" } }, [
+    h("div", { style: { fontSize: "19px", fontWeight: 700, letterSpacing: "-0.2px" } }, "Splay tree stepper"),
+    h("div", { style: { color: C.dim, fontSize: "13px", marginTop: "3px" } },
+      "Bottom-up splaying, one rotation at a time. Arrow keys step."),
+  ]);
+
+  /* controls */
+  const controls = h("div", { style: { background: C.panel, border: "1px solid " + C.line, borderRadius: "10px",
+    padding: "14px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" } }, [
+    Btn("New random tree", () => randomTree(state.size)),
+    h("label", { style: { fontSize: "12px", color: C.dim, display: "flex", alignItems: "center", gap: "7px" } }, [
+      "nodes",
+      h("input", { type: "range", min: "4", max: "12", value: state.size,
+        oninput: (e) => { state.size = Number(e.target.value); const rd = document.getElementById("sizeRead"); if (rd) rd.textContent = String(state.size); },
+        style: { width: "90px" } }),
+      h("span", { id: "sizeRead", style: { fontFamily: "ui-monospace, monospace", color: C.ink, width: "16px" } }, String(state.size)),
+    ]),
+    h("div", { style: { width: "1px", height: "26px", background: C.line } }),
+    h("select", { onchange: (e) => { state.op = e.target.value; }, style: inputStyle }, [
+      h("option", { value: "delete", selected: state.op === "delete" ? "selected" : null }, "delete"),
+      h("option", { value: "search", selected: state.op === "search" ? "selected" : null }, "search"),
+      h("option", { value: "insert", selected: state.op === "insert" ? "selected" : null }, "insert"),
+    ]),
+    h("input", { type: "number", value: state.target, oninput: (e) => { state.target = e.target.value; },
+      style: Object.assign({}, inputStyle, { width: "74px", fontFamily: "ui-monospace, monospace" }) }),
+    Btn("Run", () => run(), { primary: true }),
+    h("div", { style: { marginLeft: "auto", fontSize: "11px", color: C.dim, fontFamily: "ui-monospace, monospace" } },
+      "in tree: " + state.values.slice().sort((a, b) => a - b).join(" ")),
+  ]);
+
+  /* case badge */
+  const badge = h("div", { style: { background: info ? `${info.tint}1A` : C.panel, border: "1px solid " + (info ? info.tint : C.line),
+    borderRadius: "10px", padding: "12px 16px", marginBottom: "14px", display: "flex", alignItems: "center",
+    gap: "14px", flexWrap: "wrap", minHeight: "58px" } },
+    (step && step.caseName) ? [
+      h("div", { style: { fontFamily: "ui-monospace, monospace", fontWeight: 700, fontSize: "15px", letterSpacing: "1px", color: info.tint } }, step.caseName),
+      h("div", { style: { width: "1px", height: "22px", background: C.line } }),
+      h("div", { style: { fontSize: "13px", color: C.ink, fontWeight: 600 } }, info.rule),
+    ] : h("div", { style: { fontSize: "13px", color: C.dim, fontFamily: "ui-monospace, monospace" } }, "(no rotation case at this step)")
+  );
+
+  /* trees */
+  const trees = h("div", { style: { background: C.panel, border: "1px solid " + C.line, borderRadius: "10px",
+    padding: "22px 14px", marginBottom: "14px", display: "flex", gap: "40px", justifyContent: "center",
+    alignItems: "flex-start", flexWrap: "wrap", overflowX: "auto",
+    minHeight: treeAreaH ? (treeAreaH + 44) + "px" : null } },
+    step ? step.trees.map((t) => treeView(t.root, t.label, step.hl, step.trees.length > 1)) : null);
+
+  /* description + nav */
+  const nav = h("div", { style: { background: C.panel, border: "1px solid " + C.line, borderRadius: "10px", padding: "14px" } }, [
+    h("div", { style: { display: "flex", gap: "10px", alignItems: "center", marginBottom: "10px", flexWrap: "wrap" } }, [
+      Btn(state.playing ? "Pause" : "Play", () => {
+        if (state.playing) { state.playing = false; render(); return; }
+        if (!state.steps.length) return;
+        if (state.i >= state.steps.length - 1) state.i = 0;
+        state.playing = true;
+        render();
+      }, { disabled: !state.steps.length, primary: true }),
+      Btn("← Prev", () => { state.playing = false; state.i = Math.max(0, state.i - 1); render(); }, { disabled: state.i === 0 }),
+      Btn("Next →", () => { state.playing = false; state.i = Math.min(state.steps.length - 1, state.i + 1); render(); }, { disabled: state.i >= state.steps.length - 1, primary: true }),
+      h("div", { style: { fontFamily: "ui-monospace, monospace", fontSize: "12px", color: C.dim } },
+        "step " + (state.steps.length ? state.i + 1 : 0) + " / " + state.steps.length),
+      h("label", { style: { fontSize: "12px", color: C.dim, display: "flex", alignItems: "center", gap: "6px" } }, [
+        "speed",
+        h("input", { type: "range", min: "1", max: "10", value: String(state.speed), style: { width: "90px" },
+          oninput: (e) => { state.speed = Number(e.target.value); } }),
+      ]),
+      h("div", { style: { marginLeft: "auto", display: "flex", gap: "14px", fontSize: "11px", color: C.dim, flexWrap: "wrap" } }, [
+        Legend(C.x, "x (splaying)"),
+        Legend(C.p, "parent"),
+        Legend(C.g, "grandparent"),
+      ]),
+    ]),
+    step ? h("div", { style: { minHeight: "72px" } }, [
+      h("div", { style: { fontWeight: 700, fontSize: "14px", marginBottom: "4px" } }, step.title),
+      h("div", { style: { fontSize: "13px", color: C.dim, lineHeight: "1.55" } }, step.detail),
+    ]) : null,
+  ]);
+
+  /* pseudocode panel */
+  const stepKind = step ? (step.caseName ? step.caseName.toLowerCase() : step.kind) : null;
+  const hlLines = (stepKind && CODE_HILITE[stepKind]) || [];
+  const codeCard = h("div", { style: { background: C.panel, border: "1px solid " + C.line,
+    borderRadius: "10px", padding: "14px", marginTop: "14px" } }, [
+    h("div", { style: { fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.06em",
+      color: C.dim, marginBottom: "8px" } }, "The algorithm in words"),
+    h("div", { style: { overflowX: "auto" } }, CODE.map((l, k) => {
+      const on = hlLines.includes(k);
+      return h("div", {
+        style: { whiteSpace: "pre", fontSize: "12.5px", lineHeight: "1.7", padding: "1px 8px",
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          background: on ? "rgba(240,167,60,0.14)" : "transparent",
+          borderLeft: on ? "3px solid #F0A73C" : "3px solid transparent",
+          color: on ? C.ink : C.dim, fontWeight: on ? "600" : "400" },
+      }, l);
+    })),
+  ]);
+
+  /* reference */
+  const reference = h("div", { style: { marginTop: "14px", fontSize: "12px", color: C.dim, lineHeight: "1.7" } }, [
+    h("strong", { style: { color: C.ink } }, "Shape check."),
+    " Straight path in → staircase out. Bent path in → fan out.",
+    h("br", {}),
+    h("strong", { style: { color: C.ink } }, "Delete"),
+    " = splay to root → split (value discarded) → join (splay max of T₁, attach T₂).",
+    h("br", {}),
+    h("strong", { style: { color: C.ink } }, "Failed search"),
+    " still splays the last node visited.",
+  ]);
+
+  const inner = h("div", { style: { maxWidth: "940px", margin: "0 auto" } }, [header, controls, badge, trees, nav, codeCard, reference]);
+  const page = h("div", { style: { background: C.bg, color: C.ink, minHeight: "100vh", padding: "20px 18px 32px",
+    fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" } }, inner);
+
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(page);
+}
+
+buildTrace();
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heap Sort · CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0B1120}
+  #root{min-height:100vh}
+  body{color:#E6EDF7;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 56px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;color:#8194B0;margin:6px 0 0}
+  .panel{background:#151E31;border:1px solid #2A3752;border-radius:10px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;border:1px solid #2A3752;background:#151E31;color:#E6EDF7;cursor:pointer;transition:opacity .15s,border-color .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible,input:focus-visible{outline:2px solid #5B8DEF;outline-offset:2px}
+  input[type=range]{accent-color:#5B8DEF}
+  .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8194B0}
+  .svgwrap{overflow-x:auto}
+  .pill{font-size:11px;font-weight:600;letter-spacing:.04em;padding:3px 9px;border-radius:999px;white-space:nowrap}
+  @media (prefers-reduced-motion: reduce){*{transition:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------- palette */
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B",
+  fill:"#10192B", onDark:"#0B1120", code:"#A7B6CE", dimTxt:"#4A5A78",
+};
+
+/* ------------------------------------------------------------- core logic */
+const N = 8;
+const newArray = () => Array.from({ length: N }, () => Math.floor(Math.random() * 90) + 10);
+
+function genSteps(a) {
+  const arr = a.slice(), n = arr.length, s = [];
+  let comps = 0, swaps = 0, sortedFrom = n;
+  const snap = o => s.push({ arr: arr.slice(), comps, swaps, sortedFrom, ...o });
+
+  function sink(i, size, phase) {
+    while (true) {
+      const l = 2 * i + 1, r = 2 * i + 2;
+      let largest = i;
+      if (l < size) {
+        comps++;
+        snap({ phase, sift: i, cmp: l, heapSize: size, msg: `Compare node ${i} (value ${arr[i]}) with its left child at ${l} (value ${arr[l]})` });
+        if (arr[l] > arr[largest]) largest = l;
+      }
+      if (r < size) {
+        comps++;
+        snap({ phase, sift: i, cmp: r, heapSize: size, msg: `Compare the larger so far (value ${arr[largest]}) with the right child at ${r} (value ${arr[r]})` });
+        if (arr[r] > arr[largest]) largest = r;
+      }
+      if (largest === i) {
+        snap({ phase, sift: i, heapSize: size, msg: `Node ${i} (value ${arr[i]}) is at least as large as its children. Sink stops here` });
+        return;
+      }
+      [arr[i], arr[largest]] = [arr[largest], arr[i]];
+      swaps++;
+      snap({ phase, swap: [i, largest], sift: largest, heapSize: size, msg: `Node ${i} is smaller, so swap it with child ${largest}. Keep sinking from ${largest}` });
+      i = largest;
+    }
+  }
+
+  /* phase 1: build max-heap */
+  snap({ phase: "build", heapSize: n, msg: `Build a max-heap: sink every internal node, from the last one up to the root` });
+  for (let i = Math.floor(n / 2) - 1; i >= 0; i--) {
+    snap({ phase: "build", sift: i, heapSize: n, msg: `Sink node ${i} (value ${arr[i]})` });
+    sink(i, n, "build");
+  }
+  snap({ phase: "build", heapSize: n, msg: `Max-heap ready. The root now holds the maximum, ${arr[0]}` });
+
+  /* phase 2: repeatedly extract the max */
+  for (let end = n - 1; end >= 1; end--) {
+    snap({ phase: "sort", movingMax: 0, heapSize: end + 1, msg: `The root ${arr[0]} is the maximum. Swap it to index ${end}, the end of the current heap` });
+    [arr[0], arr[end]] = [arr[end], arr[0]];
+    swaps++;
+    sortedFrom = end;
+    snap({ phase: "sort", swap: [0, end], heapSize: end, msg: `Value ${arr[end]} is now locked in its final position at index ${end}. The heap shrinks to size ${end}` });
+    if (end > 1) snap({ phase: "sort", sift: 0, heapSize: end, msg: `Sink the new root ${arr[0]} to restore the heap property` });
+    sink(0, end, "sort");
+  }
+  sortedFrom = 0;
+  snap({ phase: "done", heapSize: 0, msg: `Sorted. Every value has been extracted to its final position` });
+  return s;
+}
+
+/* ---------------------------------------------- pseudocode (original paraphrase) */
+const CODE = [
+  "phase 1 - make the whole array a max-heap:",
+  "    walk the nodes from the bottom row up to the root,",
+  "    sinking each one until every parent beats both of its children",
+  "phase 2 - repeat while the heap still holds values:",
+  "    swap the root (the current maximum) into the heap's last slot",
+  "    shrink the heap by one - that slot now holds its final sorted value",
+  "    sink the replacement root down until parents beat children again",
+  "when the heap runs empty, the whole array is sorted",
+];
+function hiliteFor(st) {
+  if (st.phase === "done") return [7];
+  if (st.phase === "build") return st.sift !== undefined ? [1, 2] : [0];
+  /* phase "sort" */
+  if (st.movingMax !== undefined) return [4];             // root about to move to the tail
+  if (st.swap && st.sift === undefined) return [5];       // tail slot locked, heap shrinks
+  if (st.sift !== undefined) return [6];                  // sinking the new root (incl. its swaps)
+  return [3];
+}
+
+/* ------------------------------------------------------------- dom helpers */
+function h(tag, props, kids) {
+  const e = document.createElement(tag);
+  props = props || {};
+  for (const k in props) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.setAttribute("class", v);
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+function S(tag, props, kids) {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  props = props || {};
+  for (const k in props) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+
+/* ------------------------------------------------------------- coloring */
+function cellColor(i, st) {
+  if (st.sortedFrom !== undefined && i >= st.sortedFrom) return [C.green, C.onDark];
+  if (st.swap && st.swap.indexOf(i) !== -1) return [C.blue, C.onDark];
+  if (st.sift === i) return [C.coral, C.onDark];
+  if (st.cmp === i) return [C.amber, C.onDark];
+  if (st.movingMax === i) return [C.blue, C.onDark];
+  return ["#1C2942", C.code];
+}
+
+/* ------------------------------------------------------------- tree view */
+function treePanel(st) {
+  const width = 520, R = 17;
+  const size = st.heapSize || 0;
+  const pos = i => {
+    const d = Math.floor(Math.log2(i + 1));
+    const slot = i - (2 ** d - 1), full = 2 ** d;
+    return { x: width * (slot + 0.5) / full, y: 28 + d * 66, d };
+  };
+  // Size the canvas ONCE to the full heap (all N nodes) so the panel height never changes
+  // as the heap shrinks; the tree just empties within a fixed frame.
+  let fullMaxD = 0;
+  for (let i = 0; i < N; i++) fullMaxD = Math.max(fullMaxD, pos(i).d);
+  const height = 28 + fullMaxD * 66 + R + 14;
+
+  const kids = [];
+  for (let i = 1; i < size; i++) {
+    const p = pos(Math.floor((i - 1) / 2)), c = pos(i);
+    kids.push(S("line", { x1: p.x, y1: p.y, x2: c.x, y2: c.y, stroke: C.line, "stroke-width": 2 }));
+  }
+  for (let i = 0; i < size; i++) {
+    const c = pos(i);
+    let fill = "#1C2942", stroke = C.line, txt = C.code;
+    if (st.swap && st.swap.indexOf(i) !== -1) { fill = C.blue; stroke = C.blue; txt = C.onDark; }
+    else if (st.sift === i) { fill = C.coral; stroke = C.coral; txt = C.onDark; }
+    else if (st.cmp === i) { fill = C.amber; stroke = C.amber; txt = C.onDark; }
+    else if (st.movingMax === i) { fill = C.blue; stroke = C.blue; txt = C.onDark; }
+    kids.push(S("circle", { cx: c.x, cy: c.y, r: R, fill, stroke, "stroke-width": 2 }));
+    kids.push(S("text", { x: c.x, y: c.y + 1, "text-anchor": "middle", "dominant-baseline": "central",
+      "font-size": 13, "font-family": "ui-monospace, monospace", "font-weight": 600, fill: txt }, String(st.arr[i])));
+  }
+
+  if (size === 0) {
+    kids.push(S("text", { x: width / 2, y: height / 2, "text-anchor": "middle", "dominant-baseline": "central",
+      "font-size": 13, fill: C.mute }, "The heap is empty. The array is fully sorted."));
+  }
+  const svg = S("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "The current heap drawn as a binary tree" }, kids);
+  Object.assign(svg.style, { width: "100%", height: "auto", minWidth: "440px", display: "block" });
+  const inner = h("div", { class: "svgwrap" }, svg);
+  return h("div", { class: "panel", style: { padding: "12px", marginBottom: "16px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "Heap as a binary tree (children of i sit at 2i+1 and 2i+2)"),
+    inner,
+  ]);
+}
+
+/* ------------------------------------------------------------- state + render */
+const state = { base: newArray(), idx: 0, playing: false, speed: 4 };
+let steps = genSteps(state.base);
+let playTimer = null;
+function regen() { steps = genSteps(state.base); state.idx = 0; state.playing = false; }
+
+function render() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  if (state.idx > steps.length - 1) state.idx = steps.length - 1;
+  if (state.idx < 0) state.idx = 0;
+  const st = steps[state.idx];
+
+  if (state.playing) {
+    if (state.idx >= steps.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.idx += 1; render(); }, 1000 - state.speed * 88);
+  }
+
+  /* header */
+  const header = h("div", { style: { marginBottom: "18px" } }, [
+    h("h1", {}, "Heap Sort"),
+    h("p", { class: "sub" }, "Build a max-heap by sinking, then repeatedly swap the max to the tail and sink the new root. O(n log n) time, in place."),
+  ]);
+
+  /* explainer */
+  const explainer = h("div", { class: "panel", style: { padding: "12px", marginBottom: "16px" } },
+    h("div", { style: { fontSize: "13.5px", color: C.mute } },
+      "Heap sort runs in two phases. Phase 1 builds a max-heap by sinking each internal node, last to first. Phase 2 repeatedly swaps the root (the maximum) to the tail, shrinks the heap by one, and sinks the new root to restore the heap."));
+
+  /* array */
+  const mainRow = h("div", { style: { display: "flex", gap: "4px", marginBottom: "4px" } },
+    st.arr.map((v, i) => {
+      const [bg, txt] = cellColor(i, st);
+      return h("div", { class: "mono", style: { flex: "1", height: "46px", display: "flex", alignItems: "center",
+        justifyContent: "center", borderRadius: "6px", border: "1px solid #2A3752", background: bg, color: txt, fontSize: "15px", fontWeight: 600 } }, String(v));
+    }));
+  const idxRow = h("div", { style: { display: "flex", gap: "4px", marginBottom: "10px" } },
+    st.arr.map((_, i) => h("div", { class: "mono", style: { flex: "1", textAlign: "center", fontSize: "11px", color: C.dimTxt } }, String(i))));
+
+  const legend = h("div", { style: { display: "flex", flexWrap: "wrap", gap: "12px", fontSize: "12px", color: C.mute } }, [
+    ["sinking node", C.coral], ["compared child", C.amber], ["swap / moving max", C.blue], ["sorted (final)", C.green],
+  ].map(([t, col]) => h("span", { style: { display: "flex", alignItems: "center", gap: "6px" } }, [
+    h("span", { style: { width: "12px", height: "12px", borderRadius: "3px", background: col, display: "inline-block" } }), t])));
+
+  const arrayPanel = h("div", { class: "panel", style: { padding: "12px", marginBottom: "16px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "Array (the sorted suffix grows from the right)"),
+    mainRow, idxRow, legend,
+  ]);
+
+  /* message + phase pill */
+  const phaseLabel = st.phase === "build" ? "Phase 1 · Build heap" : st.phase === "sort" ? "Phase 2 · Extract max" : "Done";
+  const phaseBg = st.phase === "done" ? C.green : st.phase === "sort" ? C.blue : C.amber;
+  const message = h("div", { style: { display: "flex", alignItems: "center", gap: "10px", minHeight: "44px", marginBottom: "12px", flexWrap: "wrap" } }, [
+    h("span", { class: "pill", style: { background: phaseBg, color: C.onDark } }, phaseLabel),
+    h("span", { style: { fontSize: "14px", color: C.mute } }, st.msg),
+  ]);
+
+  /* pseudocode card, synced to the current step */
+  const hl = hiliteFor(st);
+  const codeCard = h("div", { class: "panel", style: { padding: "12px", marginBottom: "16px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "The algorithm in words"),
+    h("div", { class: "mono", style: { fontSize: "12.5px", lineHeight: "1.65", overflowX: "auto" } },
+      CODE.map((l, x) => {
+        const on = hl.indexOf(x) !== -1;
+        return h("div", { style: {
+          whiteSpace: "pre", padding: "2px 8px",
+          borderLeft: on ? "3px solid " + C.amber : "3px solid transparent",
+          background: on ? "rgba(240,167,60,0.14)" : "transparent",
+          color: on ? C.ink : C.code, fontWeight: on ? 600 : 400,
+        } }, l);
+      })),
+  ]);
+
+  /* controls */
+  const atEnd = state.idx >= steps.length - 1;
+  const controls = h("div", { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "16px" } }, [
+    h("button", { class: "btn", style: { borderColor: C.blue, background: C.blue, color: C.onDark },
+      onclick: () => { if (state.playing) { state.playing = false; render(); return; } if (atEnd) state.idx = 0; state.playing = true; render(); } },
+      state.playing ? "Pause" : "Play"),
+    h("button", { class: "btn", disabled: atEnd ? "disabled" : null,
+      onclick: () => { state.playing = false; if (state.idx < steps.length - 1) state.idx += 1; render(); } }, "Step"),
+    h("button", { class: "btn", disabled: state.idx === 0 ? "disabled" : null,
+      onclick: () => { state.playing = false; state.idx -= 1; render(); } }, "Back"),
+    h("button", { class: "btn", onclick: () => { state.playing = false; state.idx = 0; render(); } }, "Reset"),
+    h("button", { class: "btn", onclick: () => { state.base = newArray(); regen(); render(); } }, "New array"),
+    h("span", { class: "lbl", style: { marginLeft: "8px" } }, "Speed"),
+    h("input", { type: "range", min: "1", max: "10", value: String(state.speed), style: { width: "120px" },
+      oninput: (e) => { state.speed = +e.target.value; } }),
+    h("span", { style: { fontSize: "12px", color: C.mute, marginLeft: "auto" } }, "step " + (state.idx + 1) + " / " + steps.length),
+  ]);
+
+  /* stats */
+  const statTile = (label, value) => h("div", { class: "panel", style: { padding: "12px 16px", flex: "1 1 140px" } }, [
+    h("div", { class: "lbl" }, label),
+    h("div", { class: "mono", style: { fontSize: "24px", fontWeight: 600, marginTop: "2px" } }, String(value)),
+  ]);
+  const stats = h("div", { style: { display: "flex", gap: "12px", flexWrap: "wrap" } }, [
+    statTile("Comparisons", st.comps),
+    statTile("Swaps", st.swaps),
+  ]);
+
+  const wrap = h("div", { class: "wrap" }, [header, explainer, arrayPanel, treePanel(st), message, codeCard, controls, stats]);
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(wrap);
+}
+
+render();
+</script>
+</body>
+</html>

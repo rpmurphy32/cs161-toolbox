@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Insertion Sort · CS161</title>
+<style>
+  :root{
+    --bg:#0B1120; --panel:#151E31; --ink:#E6EDF7; --mute:#8194B0; --line:#2A3752;
+    --blue:#5B8DEF; --green:#2DD4A0; --amber:#F0A73C; --coral:#FF6B6B;
+    --fill:#10192B; --onDark:#0B1120; --code:#A7B6CE;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg)}
+  body{color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 56px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;color:var(--mute);margin:6px 0 0}
+  .legend{font-size:12px;color:var(--mute);margin:10px 0 0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;border:1px solid var(--line);
+    background:transparent;color:var(--ink);cursor:pointer;transition:opacity .15s,border-color .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  input[type=range]{accent-color:var(--blue)}
+  .cells{display:flex;gap:4px}
+  .cell{flex:1;height:48px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid #2A3752;
+    font-size:15px;font-weight:600;min-width:0}
+  .ptrs{display:flex;gap:4px;height:18px;margin-top:4px}
+  .ptr{flex:1;text-align:center;font-size:12px;font-weight:600;color:var(--green)}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px;flex:1 1 140px}
+  .stat .k{font-size:13px;color:var(--mute)}
+  .stat .v{font-size:24px;font-weight:600}
+  @media (max-width:560px){.wrap{padding:24px 14px 40px}.cell{height:42px;font-size:13px}}
+  @media (prefers-reduced-motion:reduce){.btn{transition:none}}
+</style>
+</head>
+<body>
+<div id="root" class="wrap"></div>
+<script>
+"use strict";
+
+/* ---- palette ---- */
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B",
+  fill:"#10192B", dimTxt:"#4A5A78", onDark:"#0B1120", code:"#A7B6CE",
+};
+
+/* ---- data ---- */
+const N = 10;
+const newArray  = () => Array.from({ length: N }, () => Math.floor(Math.random() * 90) + 10);
+const bestArray = () => Array.from({ length: N }, (_, k) => (k + 1) * 9);   // already ascending: O(n)
+const worstArray = () => Array.from({ length: N }, (_, k) => (N - k) * 9);  // descending: O(n^2)
+
+/* ---- step generator (adjacent-swap insertion sort, per the course reference) ---- */
+function genSteps(a) {
+  const s = [], arr = a.slice();
+  let comps = 0, swaps = 0;
+  const snap = o => s.push({ arr: arr.slice(), comps, swaps, ...o });
+
+  snap({ sortedLen: 1, i: 0, msg: `Start. Treat arr[0] = ${arr[0]} as a sorted prefix of length 1.` });
+  for (let i = 1; i < arr.length; i++) {
+    let j = i;
+    snap({ sortedLen: i, i, j, mov: j, msg: `Take arr[${i}] = ${arr[i]}. While it is smaller than its left neighbor, swap the two. j tracks the moving element.` });
+    while (j > 0) {
+      comps++;
+      if (arr[j] < arr[j - 1]) {
+        snap({ sortedLen: i, i, j, cmp: j - 1, mov: j, msg: `arr[${j}] = ${arr[j]} < arr[${j - 1}] = ${arr[j - 1]}. Swap them.` });
+        const t = arr[j]; arr[j] = arr[j - 1]; arr[j - 1] = t;
+        swaps++; j--;
+        snap({ sortedLen: i, i, j, mov: j, msg: j === 0
+          ? `Swapped. ${arr[j]} reached the front of the array - it is the smallest value so far.`
+          : `Swapped. ${arr[j]} moved left to index ${j}.` });
+      } else {
+        snap({ sortedLen: i, i, j, cmp: j - 1, mov: j, msg: `arr[${j}] = ${arr[j]} ≥ arr[${j - 1}] = ${arr[j - 1]}. Stop swapping - the element is in place.` });
+        break;
+      }
+    }
+    snap({ sortedLen: i + 1, i, placed: j, msg: `${arr[j]} settled at index ${j}. Now arr[0..${i}] is sorted.` });
+  }
+  snap({ sortedLen: arr.length, done: true, msg: `Done. The whole array is one sorted prefix.` });
+  return s;
+}
+
+/* ---- pseudocode ---- */
+const CODE = [
+  "for each element from the second position onward:",
+  "    walk it toward the front, one neighbor at a time:",
+  "    if it is smaller than the neighbor on its left,",
+  "        swap the pair and keep walking left",
+  "    stop as soon as the left neighbor is no bigger (or the front is reached)",
+  "    the sorted prefix now includes this element",
+  "done once the final element settles into place",
+];
+const HILITE = { init:[0], take:[0,1], cmp:[2], swap:[3], stop:[4], placed:[5], done:[6] };
+function phaseOf(st) {
+  if (st.done) return "done";
+  if (st.placed !== undefined) return "placed";
+  if (st.cmp !== undefined) return st.arr[st.j] < st.arr[st.j - 1] ? "cmp" : "stop";
+  if (st.j === undefined) return "init";                    // arr[0] is a trivial prefix
+  return st.j === st.i ? "take" : "swap";                   // pass start vs just swapped
+}
+
+/* ---- tiny dom helper ---- */
+function h(tag, props, kids) {
+  const e = document.createElement(tag);
+  props = props || {};
+  for (const k in props) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.className = v;
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+
+/* ---- state ---- */
+const state = { base: newArray(), idx: 0, playing: false, speed: 4 };
+let steps = genSteps(state.base);
+let playTimer = null;
+
+function rebuild() { steps = genSteps(state.base); state.idx = 0; state.playing = false; }
+
+function render() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  if (state.idx > steps.length - 1) state.idx = steps.length - 1;
+  if (state.idx < 0) state.idx = 0;
+  const st = steps[state.idx];
+
+  if (state.playing) {
+    if (state.idx >= steps.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.idx += 1; render(); }, 1000 - state.speed * 88);
+  }
+
+  /* array cells */
+  const cells = st.arr.map((v, x) => {
+    let bg = "#1C2942", txt = C.code;
+    if (x < st.sortedLen) { bg = C.green; txt = C.onDark; }
+    if (st.cmp === x) { bg = C.amber; txt = C.onDark; }
+    if (st.mov === x) { bg = C.coral; txt = C.onDark; }
+    if (st.placed === x) { bg = C.green; txt = C.onDark; }
+    if (st.done) { bg = C.green; txt = C.onDark; }
+    return h("div", { class: "cell mono", style: { background: bg, color: txt } }, String(v));
+  });
+
+  const ptrs = st.arr.map((_, x) => {
+    let lbl = "";
+    if (st.i === x) lbl = "↑ i";
+    if (st.j === x) lbl += (lbl ? " " : "") + "↑ j";
+    return h("div", { class: "ptr mono" }, lbl);
+  });
+
+  /* controls */
+  const btn = (label, onclick, extra) => h("button", Object.assign({ class: "btn", onclick }, extra || {}), label);
+  const atEnd = state.idx >= steps.length - 1;
+  const controls = h("div", { class: "row", style: { marginTop: "14px" } }, [
+    btn(state.playing ? "Pause" : "Play", () => {
+      if (state.playing) { state.playing = false; render(); return; }
+      if (atEnd) state.idx = 0;
+      state.playing = true; render();
+    }, { style: { borderColor: C.blue, background: C.blue, color: C.onDark } }),
+    btn("Step", () => { state.playing = false; if (state.idx < steps.length - 1) state.idx += 1; render(); },
+      { disabled: atEnd ? "disabled" : null }),
+    btn("Back", () => { state.playing = false; if (state.idx > 0) state.idx -= 1; render(); },
+      { disabled: state.idx === 0 ? "disabled" : null }),
+    btn("Reset", () => { state.playing = false; state.idx = 0; render(); }),
+    btn("New array", () => { state.base = newArray(); rebuild(); render(); }),
+    btn("Sorted (best case)", () => { state.base = bestArray(); rebuild(); render(); }),
+    btn("Reverse (worst case)", () => { state.base = worstArray(); rebuild(); render(); }),
+    h("label", { class: "sub", style: { marginLeft: "6px" } }, "Speed"),
+    h("input", {
+      type: "range", min: "1", max: "10", value: String(state.speed),
+      style: { width: "120px" },
+      oninput: (e) => { state.speed = +e.target.value; },
+    }),
+    h("span", { class: "sub", style: { marginLeft: "auto" } }, "step " + (state.idx + 1) + " / " + steps.length),
+  ]);
+
+  const stat = (k, v) => h("div", { class: "stat" }, [h("div", { class: "k" }, k), h("div", { class: "v mono" }, String(v))]);
+
+  const view = h("div", {}, [
+    h("h1", {}, "Insertion Sort"),
+    h("p", { class: "sub" }, "Grow a sorted prefix one element at a time. Each new element swaps left past larger neighbors until it is in place."),
+    h("p", { class: "legend" }, "green = sorted prefix · coral = the moving element (j) · amber = the left neighbor being compared"),
+
+    h("div", { class: "panel", style: { padding: "12px", marginTop: "16px" } }, [
+      h("div", { class: "cells" }, cells),
+      h("div", { class: "ptrs" }, ptrs),
+    ]),
+
+    h("div", { class: "panel", style: { padding: "10px 12px", marginTop: "12px" } }, [
+      h("div", { class: "sub", style: { marginBottom: "2px" } }, "Invariant"),
+      h("div", { class: "mono", style: { fontSize: "13px", color: C.mute } },
+        "arr[0..i) is sorted (but not necessarily final). Set j = i, then while j > 0 and arr[j] < arr[j-1], swap the adjacent pair and decrement j."),
+    ]),
+
+    h("div", { class: "mono", style: { fontSize: "14px", color: C.mute, minHeight: "44px", marginTop: "12px" } }, st.msg),
+
+    h("div", { class: "panel", style: { padding: "10px 12px", marginTop: "12px", overflowX: "auto" } }, [
+      h("div", { class: "sub", style: { margin: "0 0 6px" } }, "The algorithm in words"),
+      h("div", {}, CODE.map((l, k) => {
+        const on = (HILITE[phaseOf(st)] || []).includes(k);
+        return h("div", { class: "mono", style: {
+          fontSize: "12.5px", lineHeight: "1.7", whiteSpace: "pre", padding: "1px 8px",
+          background: on ? "rgba(240,167,60,0.14)" : "transparent",
+          borderLeft: on ? "3px solid " + C.amber : "3px solid transparent",
+          color: on ? C.ink : C.code, fontWeight: on ? 600 : 400 } }, [
+          h("span", { style: { color: C.mute } }, String(k + 1) + "  "),
+          l,
+        ]);
+      })),
+    ]),
+
+    controls,
+
+    h("div", { class: "row", style: { marginTop: "16px", alignItems: "stretch" } }, [
+      stat("Comparisons", st.comps),
+      stat("Swaps", st.swaps),
+      stat("Sorted so far", st.sortedLen),
+    ]),
+  ]);
+
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(view);
+}
+
+render();
+</script>
+</body>
+</html>

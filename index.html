@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS161 Toolbox: Interactive Algorithm Visualizers</title>
+<style>
+  :root{
+    --bg:#0B1120; --panel:#151E31; --ink:#E6EDF7; --mute:#8194B0;
+    --line:#2A3752; --blue:#5B8DEF; --green:#2DD4A0; --amber:#F0A73C; --coral:#FF6B6B;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg)}
+  body{color:var(--ink);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.55}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:960px;margin:0 auto;padding:48px 20px 64px}
+
+  /* ---- header ---- */
+  header{display:flex;flex-wrap:wrap;align-items:center;gap:24px;
+    padding-bottom:28px;margin-bottom:36px;border-bottom:1px solid var(--line)}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute);margin:0 0 10px}
+  h1{font-size:34px;line-height:1.1;font-weight:650;letter-spacing:-.02em;margin:0;text-wrap:balance}
+  .lede{font-size:15px;color:var(--mute);margin:12px 0 0;max-width:52ch}
+  .glyph{flex-shrink:0}
+
+  /* ---- sections ---- */
+  .group{margin-bottom:40px}
+  .ghead{display:flex;align-items:baseline;gap:12px;margin:0 0 4px;font-size:14px;
+    font-weight:600;letter-spacing:.02em}
+  .ghead .rule{flex:1;height:1px;background:var(--line)}
+  .gcount{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:500}
+  .gsub{margin:0 0 16px;font-size:13px;color:var(--mute)}
+
+  /* ---- cards ---- */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+  .tool{display:flex;flex-direction:column;gap:10px;padding:20px;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    transition:border-color .18s ease, transform .18s ease}
+  a.tool:hover{border-color:var(--green);transform:translateY(-3px)}
+  a.tool:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+  .tag{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--green)}
+  .tool h3{font-size:18px;font-weight:600;margin:0;letter-spacing:-.01em}
+  .tool p{font-size:13.5px;color:var(--mute);margin:0;flex-grow:1}
+  .open{font-size:13px;font-weight:600;color:var(--blue);margin-top:4px}
+  a.tool:hover .open{color:var(--green)}
+  .soon{border-style:dashed;opacity:.7}
+  .soon .tag{color:var(--amber)}
+  .soon h3{color:var(--mute)}
+
+  /* ---- reference table ---- */
+  .tablewrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px 16px 14px}
+  table.cheat{width:100%;border-collapse:collapse;font-size:13px;min-width:640px}
+  .cheat th{text-align:left;color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;padding:12px 14px 8px 0;border-bottom:1px solid var(--line)}
+  .cheat td{padding:10px 14px 10px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--mute)}
+  .cheat tr:last-child td{border-bottom:none}
+  .cheat td.alg{color:var(--ink);font-weight:600;white-space:nowrap}
+  .cheat td.rt{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;color:var(--ink)}
+  .badge{display:inline-block;font-size:10px;letter-spacing:.05em;text-transform:uppercase;font-weight:600;
+    padding:1px 7px;border-radius:99px;margin-left:8px;vertical-align:middle;white-space:nowrap}
+  .badge.out{color:var(--coral);border:1px solid var(--coral)}
+  .tnote{font-size:12px;color:var(--mute);margin:10px 0 0}
+  .cheat td.group{padding:16px 0 6px;color:var(--green);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+
+  footer{margin-top:8px;padding-top:22px;border-top:1px solid var(--line);
+    font-size:12.5px;color:var(--mute)}
+  .footrow{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+  .credit{margin:12px 0 0;font-size:12.5px;color:var(--mute)}
+  .disclaimer{margin:6px 0 0;font-size:11.5px;color:var(--mute);opacity:.8;max-width:70ch}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block}
+
+  @media (prefers-reduced-motion: reduce){.tool{transition:none}a.tool:hover{transform:none}}
+  @media (max-width:560px){.wrap{padding:32px 16px 48px}h1{font-size:28px}}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <!-- little MST motif: three nodes, one highlighted "tree" edge -->
+      <svg class="glyph" width="88" height="88" viewBox="0 0 88 88" aria-hidden="true">
+        <line x1="20" y1="24" x2="66" y2="18" stroke="#2A3752" stroke-width="3"/>
+        <line x1="66" y1="18" x2="70" y2="64" stroke="#2A3752" stroke-width="3"/>
+        <line x1="20" y1="24" x2="34" y2="66" stroke="#2DD4A0" stroke-width="5" stroke-linecap="round"/>
+        <line x1="34" y1="66" x2="70" y2="64" stroke="#2DD4A0" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="20" cy="24" r="9" fill="#5B8DEF"/>
+        <circle cx="66" cy="18" r="9" fill="#151E31" stroke="#4A5A78" stroke-width="3"/>
+        <circle cx="70" cy="64" r="9" fill="#5B8DEF"/>
+        <circle cx="34" cy="66" r="9" fill="#5B8DEF"/>
+      </svg>
+      <div>
+        <p class="eyebrow mono">CS161 · Algorithms</p>
+        <h1>CS161 Toolbox</h1>
+        <p class="lede">Small, interactive visualizers for CS161 algorithms. Runs entirely in your browser.</p>
+      </div>
+    </header>
+
+    <main>
+      <section class="group">
+        <h2 class="ghead">Midterm 1 <span class="gcount">Sorting &amp; selection · 8 tools</span> <span class="rule"></span></h2>
+        <p class="gsub">Selection, insertion, merge, heap, and quicksort, plus quickselect. Stepped through one comparison at a time, with the counts and memory that make the running times concrete.</p>
+        <div class="grid">
+          <a class="tool" href="sorting-comparison.html">
+            <span class="tag mono">Selection · Insertion · Merge</span>
+            <h3>Sorting Comparison</h3>
+            <p>Watch selection, insertion, and merge sort run on the same array, with live comparison and write counts and each one's worst-case bound.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="selection-sort.html">
+            <span class="tag mono">Selection sort · Θ(n²)</span>
+            <h3>Selection Sort</h3>
+            <p>Each pass scans the unsorted suffix for its smallest element and swaps it to the front, growing the sorted prefix one final value at a time.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="insertion-sort.html">
+            <span class="tag mono">Insertion sort · Θ(n²)</span>
+            <h3>Insertion Sort</h3>
+            <p>Grow a sorted prefix one key at a time, shifting larger elements right to open a gap, with best-case and worst-case inputs that contrast O(n) against O(n²).</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="merge-sort.html">
+            <span class="tag mono">Merge · n log n</span>
+            <h3>Merge Sort</h3>
+            <p>Step through the merges with their L and R helper arrays and peak memory, then see the recursion tree behind the n log n running time.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="heap-sort.html">
+            <span class="tag mono">Heap sort · n log n</span>
+            <h3>Heap Sort</h3>
+            <p>Build a max-heap by sifting nodes down, then repeatedly swap the root to the tail and re-heapify, shown on both the array and a live binary-tree view.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="quicksort-lomuto.html">
+            <span class="tag mono">Quicksort · Lomuto</span>
+            <h3>Quicksort: Lomuto Partition</h3>
+            <p>Step through quicksort with the Lomuto partition (pivot = last element), track the partition invariant, and see why sorted input is the worst case. (Alternative partition - not the lecture version.)</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="quicksort-sedgewick.html">
+            <span class="tag mono">Quicksort · Two-pointer</span>
+            <h3>Quicksort: Sedgewick Partition</h3>
+            <p>Step through the two-pointer Sedgewick partition with a random pivot and strict comparisons, and see how it keeps splits balanced even on all-equal keys. (Lecture version.)</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="quickselect.html">
+            <span class="tag mono">Quickselect · O(n) expected</span>
+            <h3>Quickselect</h3>
+            <p>Find the k-th smallest value by partitioning like quicksort but recursing into only the side that holds the target, in expected O(n) time.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="group">
+        <h2 class="ghead">Midterm 2 <span class="gcount">Balanced search trees · 4 tools</span> <span class="rule"></span></h2>
+        <p class="gsub">Four search-tree data structures and how each one keeps itself in shape as you insert and delete.</p>
+        <div class="grid">
+          <a class="tool" href="bst.html">
+            <span class="tag mono">Plain BST · No rebalancing</span>
+            <h3>BST Insert &amp; Delete</h3>
+            <p>Insertion and deletion on a plain binary search tree, including the tricky two-children delete via in-order successor swap.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="avl.html">
+            <span class="tag mono">Balanced BST · Rotations</span>
+            <h3>AVL Insertion</h3>
+            <p>Insert a key, walk up the ancestors updating heights, and watch the single (outside) vs. double (inside) rotation fix the first unbalanced node.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="two-three-tree.html">
+            <span class="tag mono">Balanced BST · Splits</span>
+            <h3>2–3 Tree Insertion</h3>
+            <p>Insert into a 2–3 tree and watch it rebalance. Descend to the leaf, split each illegal 4-node, and push the middle key up into its parent.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="splay.html">
+            <span class="tag mono">Balanced BST · Amortized</span>
+            <h3>Splay Tree</h3>
+            <p>Search, insert, and delete one rotation at a time: every zig / zig-zig / zig-zag case, plus the split-and-join used for deletion.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="group">
+        <h2 class="ghead">Final <span class="gcount">Graphs, greedy &amp; DP · 7 tools</span> <span class="rule"></span></h2>
+        <p class="gsub">Shortest paths, minimum spanning trees, DFS, and strongly connected components, plus the greedy and dynamic-programming problems from the last unit.</p>
+        <div class="grid">
+          <a class="tool" href="dfs-topological-sort.html">
+            <span class="tag mono">Graphs · DFS</span>
+            <h3>DFS &amp; Topological Sort</h3>
+            <p>Run depth-first search recording preorder and postorder, then topological-sort a DAG by the ready-list method, deleting each node and its out-edges to unlock the next.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="dijkstra.html">
+            <span class="tag mono">Shortest paths · Heap</span>
+            <h3>Dijkstra's</h3>
+            <p>Pop the closest unvisited node and relax its out-edges, with a live dist/pred table and shortest-path tree, plus a BFS toggle that runs the same graph unweighted.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="bellman-ford.html">
+            <span class="tag mono">Shortest paths · Relax</span>
+            <h3>Bellman-Ford</h3>
+            <p>Relax every edge pass after pass until distances stop changing, and reorder the edges to see why a good order finishes near O(n+m) while the worst needs O(n·m).</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="prims.html">
+            <span class="tag mono">MST · Greedy</span>
+            <h3>Prim's Algorithm</h3>
+            <p>Step through Prim's exactly as the CS161 pseudocode runs it. Watch the cut grow, the heap fill with stale edges, and the cut lemma choose each MST edge. Includes six generated challenge graphs.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="kruskal-union-find.html">
+            <span class="tag mono">MST · Union-Find</span>
+            <h3>Kruskal + Union-Find</h3>
+            <p>Scan edges lightest first and add each one only if its endpoints lie in different components, with a live union-find forest showing union-by-size and path compression as the cycle test.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="tarjan.html">
+            <span class="tag mono">Graphs · SCC</span>
+            <h3>Tarjan's Algorithm</h3>
+            <p>Watch Tarjan's DFS assign number and low to each node and carve the graph into strongly connected components, with a toggle that removes the scc_root guard to expose the bug it prevents.</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+          <a class="tool" href="interval-scheduling.html">
+            <span class="tag mono">Greedy · DP</span>
+            <h3>Interval Scheduling</h3>
+            <p>Keep the maximum number of non-overlapping meetings, comparing five greedy rules against the take-or-skip DP to see which rules match the optimum and which get trapped. (The take-or-skip DP follows the supplemental course handout; the greedy rules match lecture.)</p>
+            <span class="open">Open the visualizer →</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="group">
+        <h2 class="ghead">Reference Table <span class="rule"></span></h2>
+        <div class="tablewrap">
+          <table class="cheat">
+            <thead>
+              <tr><th>Algorithm</th><th>What it's for</th><th>Running time</th><th>Exam gotcha</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="group" colspan="4">Sorting &amp; Selection · MT1</td></tr>
+              <tr>
+                <td class="alg">Selection sort</td>
+                <td>Each pass scans the unsorted suffix for its minimum and swaps it to the front.</td>
+                <td class="rt">O(n&sup2;) always</td>
+                <td>~n&sup2;/2 comparisons even on sorted input, but only &Theta;(n) swaps (the sheet's code swaps once per pass, even with itself) - the sort to pick when writes are expensive.</td>
+              </tr>
+              <tr>
+                <td class="alg">Insertion sort</td>
+                <td>Grow a sorted prefix one key at a time, shifting larger elements right.</td>
+                <td class="rt">O(n) best<br>O(n&sup2;) avg &amp; worst</td>
+                <td>Running time &asymp; n + #inversions, so nearly-sorted input is O(n) - the case where it beats merge sort.</td>
+              </tr>
+              <tr>
+                <td class="alg">Merge sort</td>
+                <td>Divide and conquer: sort each half, then merge the two sorted halves.</td>
+                <td class="rt">O(n log n) always<br>+ O(n) space</td>
+                <td>Not in place - needs a scratch array. Analyze with the recursion tree (course only requires n a power of 2).</td>
+              </tr>
+              <tr>
+                <td class="alg">Quicksort</td>
+                <td>Partition around a random pivot so smaller items land left and larger land right, then recurse on both sides.</td>
+                <td class="rt">O(n log n) expected<br>O(n&sup2;) worst</td>
+                <td>Random pivot &rArr; expected O(n log n) on every input - expected worst-case: the randomness is in the algorithm, not the input. Lecture partition = the two-pointer scheme.</td>
+              </tr>
+              <tr>
+                <td class="alg">Quickselect</td>
+                <td>Find the rank-k element: partition like quicksort, but recurse only into the side containing rank k.</td>
+                <td class="rt">O(n) expected<br>O(n&sup2;) worst</td>
+                <td>One-sided recursion is exactly why it's expected linear instead of n log n.</td>
+              </tr>
+              <tr>
+                <td class="alg">Binary heap</td>
+                <td>Complete binary tree where every node &ge; its children (max-heap); backs priority queues.</td>
+                <td class="rt">insert/delete O(log n)<br>find-max O(1)</td>
+                <td>Array encoding: children of x at 2x+1, 2x+2; parent at &lfloor;(x&minus;1)/2&rfloor;. Restore with swim (up) / sink (down).</td>
+              </tr>
+              <tr>
+                <td class="alg">Heapsort</td>
+                <td>Heapify the array, then repeatedly delete the max into the freed tail slot.</td>
+                <td class="rt">O(n log n)<br>heapify O(n)</td>
+                <td>Bottom-up heapify is O(n), not O(n log n) - the deep levels have almost no nodes below them. In place.</td>
+              </tr>
+              <tr>
+                <td class="alg">Comparison-sort lower bound</td>
+                <td>Theorem: no comparison-based sort beats n log n in the worst case (decision-tree argument).</td>
+                <td class="rt">&Omega;(n log n)</td>
+                <td>It says SOME input is slow, not every input - best-case sequences can still be fast. Also rules out too-fast comparison-based data structures.</td>
+              </tr>
+              <tr><td class="group" colspan="4">Search Structures · MT2</td></tr>
+              <tr>
+                <td class="alg">BST (plain)</td>
+                <td>Search / insert / delete by walking left or right on the ordering property.</td>
+                <td class="rt">O(log n) avg<br>O(n) worst</td>
+                <td>Random insertion order gives O(log n) height, but sorted insertions build a linked list. Two-children delete: swap with the in-order successor.</td>
+              </tr>
+              <tr>
+                <td class="alg">AVL tree</td>
+                <td>BST where every node's subtree heights differ by at most 1, fixed by rotations on insert.</td>
+                <td class="rt">O(log n) worst</td>
+                <td>At most one single (Case 1, the worksheet's "Zig") or double (Case 2, "Zig-Zag") rebalance per insert.</td>
+              </tr>
+              <tr>
+                <td class="alg">2-3 tree</td>
+                <td>Perfectly balanced tree of 2-nodes and 3-nodes; inserts fatten a leaf and split 4-nodes upward.</td>
+                <td class="rt">O(log n) worst</td>
+                <td>All leaves at the same depth - the tree grows at the root, not the leaves. A red-black tree is a binary encoding of a 2-3 tree.</td>
+              </tr>
+              <tr>
+                <td class="alg">Splay tree</td>
+                <td>Self-adjusting BST: every access splays the node to the root via zig / zig-zig / zig-zag.</td>
+                <td class="rt">O(log n) amortized<br>O(n) single op</td>
+                <td>The bound is amortized - one operation can cost &Theta;(n). Splay on every access, including unsuccessful searches; skipping those breaks the bound.</td>
+              </tr>
+              <tr>
+                <td class="alg">Hash table (chaining)</td>
+                <td>hash(key) picks a bucket; each bucket is a linked list of its items.</td>
+                <td class="rt">O(1) expected<br>O(n) worst</td>
+                <td>Two adversary models: operations chosen before a random hash fn &rArr; expected O(1); an adversary who knows the hash fn can force one bucket &rArr; O(n) per op. Totals = #ops &times; per-op cost.</td>
+              </tr>
+              <tr>
+                <td class="alg">Dynamic array</td>
+                <td>Push (append at the end) into spare capacity; when full, allocate double and copy everything over.</td>
+                <td class="rt">O(1) amortized push<br>O(n) single push</td>
+                <td>Doubling makes n pushes O(n) total (the course's 'direct' method, or the potential method); growing by 1 each time is &Theta;(n&sup2;).</td>
+              </tr>
+              <tr><td class="group" colspan="4">Graphs · Final</td></tr>
+              <tr>
+                <td class="alg">visit</td>
+                <td>Reach everything reachable from one start node; the recursive core of DFS. Records preorder (on entry) and postorder (on finish).</td>
+                <td class="rt">O(n + m)</td>
+                <td>Without the visited check it loops forever on cycles / blows up on diamonds.</td>
+              </tr>
+              <tr>
+                <td class="alg">BFS</td>
+                <td>Shortest paths when every edge counts as 1 (unweighted). Explores layer by layer.</td>
+                <td class="rt">O(n + m)</td>
+                <td>It's Dijkstra with all weights 1: FIFO queue replaces the min-heap. A node's dist is final the moment it's enqueued.</td>
+              </tr>
+              <tr>
+                <td class="alg">DFS (all nodes)</td>
+                <td>Full traversal: call visit from every still-unvisited node. Pre/postorder power cycle detection and topological sort.</td>
+                <td class="rt">O(n + m)</td>
+                <td>Reverse postorder of a DAG is a valid topological order.</td>
+              </tr>
+              <tr>
+                <td class="alg">Topological sort</td>
+                <td>Order a DAG so every edge points earlier &rarr; later (ready-list method: repeatedly take a node with no remaining in-edges).</td>
+                <td class="rt">O(n + m)</td>
+                <td>Only exists for DAGs - if the ready list empties early, the leftover nodes contain a cycle.</td>
+              </tr>
+              <tr>
+                <td class="alg">Dijkstra</td>
+                <td>Single-source shortest paths with non-negative weights. Pop the smallest-dist unvisited node (finalizing it), relax its out-edges.</td>
+                <td class="rt">O((n + m) log n)<br>with a min-heap</td>
+                <td>Negative edges break it - it finalizes nodes permanently. Only write final dist/pred values in an execution table.</td>
+              </tr>
+              <tr>
+                <td class="alg">Bellman-Ford</td>
+                <td>Single-source shortest paths, negative edges allowed. Relax every edge, pass after pass, until nothing changes.</td>
+                <td class="rt">O(n &middot; m) worst<br>O(n + m) best (early stop)</td>
+                <td>Stops early once a pass changes nothing; a good edge order can converge in very few passes, the worst order needs ~n. Needs no negative cycles - if pass n still changes something, the graph has one.</td>
+              </tr>
+              <tr>
+                <td class="alg">Prim</td>
+                <td>Minimum spanning tree: grow one tree from any start node, always adding the lightest edge leaving the reached set.</td>
+                <td class="rt">O(m log n)</td>
+                <td>The heap holds stale edges (both endpoints already reached) - that's what <span class="mono">continue</span> throws away.</td>
+              </tr>
+              <tr>
+                <td class="alg">Kruskal</td>
+                <td>Minimum spanning tree: scan all edges lightest-first, add an edge iff its endpoints are in different components (union-find).</td>
+                <td class="rt">O(m log n)</td>
+                <td>Sorting dominates; union-find ops are amortized far below O(log n) each. Skipped edge = its endpoints already connected.</td>
+              </tr>
+              <tr>
+                <td class="alg">Tarjan</td>
+                <td>Strongly connected components of a directed graph in one DFS pass, using number/low and a stack.</td>
+                <td class="rt">O(n + m)</td>
+                <td>node.low == node.number &rArr; node roots a sink SCC: pop the stack down to it. Know how to run it, not prove it.</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="tnote">n = input size (elements, or nodes in a graph); m = number of edges.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p class="disclaimer">An independent student project. Not affiliated with, endorsed by, or officially associated with Stanford University or the CS161 course staff.</p>
+    </footer>
+  </div>
+</body>
+</html>

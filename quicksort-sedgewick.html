@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quicksort: Sedgewick Partition · CS161 Toolbox</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0B1120}
+  body{color:#E6EDF7;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .page{min-height:100vh;padding:24px 16px 48px}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13.5px;color:#8194B0;margin:6px 0 20px;max-width:60ch}
+  .panel{background:#151E31;border:1px solid #2A3752;border-radius:10px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;
+    border:1px solid #2A3752;background:transparent;color:#E6EDF7;cursor:pointer;
+    transition:opacity .15s,background .15s,border-color .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible{outline:2px solid #5B8DEF;outline-offset:2px}
+  input[type=range]{accent-color:#5B8DEF}
+  .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#8194B0}
+  @media (prefers-reduced-motion: reduce){.btn{transition:none}}
+</style>
+</head>
+<body>
+<div id="root" class="page"></div>
+<script>
+"use strict";
+
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B",
+  mfill:"#10192B", onDark:"#0B1120", code:"#A7B6CE", dimTxt:"#4A5A78",
+};
+
+/* ------------------------------------------------------------- core logic */
+const N = 8;
+const newArray = () => Array.from({ length: N }, () => Math.floor(Math.random() * 90) + 10);
+
+function genSteps(a) {
+  const s = [], arr = a.slice(), sorted = new Set();
+  let comps = 0, swaps = 0, maxDepth = 0;
+  const snap = o => s.push({ arr: arr.slice(), sorted: new Set(sorted), comps, swaps, maxDepth, ...o });
+
+  const iMsg = (i, v) =>
+    `i scan: ++i → ${i}. A[${i}]=${arr[i]} ${arr[i] < v ? "< " + v + " → keep moving" : arr[i] === v ? "= " + v + " → STOP (strict <)" : "≥ " + v + " → STOP"}`;
+  const jMsg = (j, v) =>
+    `j scan: --j → ${j}. A[${j}]=${arr[j]} ${arr[j] > v ? "> " + v + " → keep moving" : arr[j] === v ? "= " + v + " → STOP (strict >)" : "≤ " + v + " → STOP"}`;
+
+  function qs(lo, hi, depth) {
+    maxDepth = Math.max(maxDepth, depth);
+    if (hi - lo <= 1) {
+      if (hi - lo === 1) { sorted.add(lo); snap({ lo, hi, k: "base", msg: `[${lo}..${hi}) has one element, in place` }); }
+      return;
+    }
+    const p = lo + Math.floor(Math.random() * (hi - lo));
+    snap({ lo, hi, hl: p, k: "pick", msg: `quicksort([${lo}..${hi}), depth ${depth}): random pivot index = ${p}, value ${arr[p]}` });
+    if (p !== lo) { [arr[lo], arr[p]] = [arr[p], arr[lo]]; swaps++; }
+    const v = arr[lo];
+    snap({ lo, hi, piv: lo, k: "park", msg: `Park pivot: swap A[${lo}] ↔ A[${p}]. v = ${v}. i = ${lo}, j = ${hi}` });
+    let i = lo, j = hi;
+    while (true) {
+      i++; comps++;
+      snap({ lo, hi, piv: lo, i, j: j < hi ? j : undefined, cmpI: true, k: "iscan", msg: iMsg(i, v) });
+      while (arr[i] < v) {
+        if (i + 1 >= hi) { snap({ lo, hi, piv: lo, i, j: j < hi ? j : undefined, k: "iscan", msg: `Guard: i+1 = ${i + 1} ≥ hi. Break so i cannot run off the end` }); break; }
+        i++; comps++;
+        snap({ lo, hi, piv: lo, i, j: j < hi ? j : undefined, cmpI: true, k: "iscan", msg: iMsg(i, v) });
+      }
+      j--; comps++;
+      snap({ lo, hi, piv: lo, i, j, cmpJ: true, k: "jscan", msg: jMsg(j, v) });
+      while (arr[j] > v) {
+        j--; comps++;
+        snap({ lo, hi, piv: lo, i, j, cmpJ: true, k: "jscan", msg: jMsg(j, v) });
+      }
+      if (i >= j) {
+        snap({ lo, hi, piv: lo, i, j, k: "cross", msg: `i (${i}) ≥ j (${j}): pointers crossed` });
+        [arr[lo], arr[j]] = [arr[j], arr[lo]];
+        swaps++;
+        sorted.add(j);
+        snap({ lo, hi, i, j, k: "place", msg: `Swap A[${lo}] ↔ A[${j}]: pivot ${v} lands at index ${j}, its FINAL position. Return ${j}` });
+        qs(lo, j, depth + 1);
+        qs(j + 1, hi, depth + 1);
+        return;
+      }
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+      swaps++;
+      snap({ lo, hi, piv: lo, i, j, k: "swap", msg: `Both stopped, not crossed: swap A[${i}]=${arr[j]} ↔ A[${j}]=${arr[i]} (misplaced pair)` });
+    }
+  }
+  qs(0, arr.length, 1);
+  snap({ sorted: new Set(arr.map((_, x) => x)), done: true, k: "done", msg: "Sorted" });
+  return s;
+}
+
+/* ------------------------------------------------------------- pseudocode */
+/* Original plain-English paraphrase of the two-pointer scheme (not the
+   reference-sheet text). */
+const CODE = [
+  "pick a random element; park it at the front - call it the pivot v",
+  "repeat:",
+  "    march i rightward, sliding past elements smaller than v",
+  "    march j leftward, sliding past elements larger than v",
+  "    if i and j have not crossed yet:",
+  "        each is stuck on a wrong-side element - swap the pair, keep marching",
+  "    once they cross: drop the pivot at j - that spot is final",
+  "sort the piece left of j and the piece right of j the same way",
+  "a range holding a single element is already done",
+];
+const HILITE = {
+  pick: [0], park: [0], iscan: [2], jscan: [3],
+  swap: [4, 5], cross: [6], place: [6, 7], base: [8], done: [],
+};
+
+/* --------------------------------------------------------------- dom help */
+function h(tag, props, kids){
+  const e = document.createElement(tag);
+  props = props || {};
+  for (const k in props){
+    const v = props[k];
+    if (v == null || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.className = v;
+    else if (k.slice(0,2) === "on" && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function add(c){
+    if (c == null || c === false) return;
+    if (Array.isArray(c)) { c.forEach(add); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+
+/* ----------------------------------------------------------------- state */
+const state = { base: newArray(), seed: 0, idx: 0, playing: false, speed: 4 };
+let cache = { key: null, steps: null };
+function getSteps(){
+  const key = state.seed + "|" + state.base.join(",");
+  if (cache.key === key) return cache.steps;
+  cache = { key, steps: genSteps(state.base) };
+  return cache.steps;
+}
+const inR = (st, x) => st.lo !== undefined && x >= st.lo && x < st.hi; // hi exclusive
+
+function cellColors(st, x){
+  if (st.sorted.has(x)) return [C.green, C.onDark];
+  if (st.lo !== undefined && !inR(st, x)) return [C.mfill, C.dimTxt];
+  if (st.piv === x) return [C.coral, C.onDark];
+  if ((st.cmpI && st.i === x) || (st.cmpJ && st.j === x) || st.hl === x) return [C.amber, C.onDark];
+  return ["#1C2942", C.code];
+}
+
+let timer = null;
+
+function render(){
+  if (timer){ clearTimeout(timer); timer = null; }
+  const steps = getSteps();
+  if (state.idx > steps.length - 1) state.idx = steps.length - 1;
+  if (state.idx < 0) state.idx = 0;
+  const st = steps[state.idx];
+  const atEnd = state.idx >= steps.length - 1;
+
+  if (state.playing){
+    if (atEnd) state.playing = false;
+    else timer = setTimeout(() => { state.idx += 1; render(); }, 1000 - state.speed * 88);
+  }
+
+  const btn = (label, onclick, extra) => h("button", Object.assign({ class: "btn", onclick }, extra || {}), label);
+
+  /* array cells */
+  const cells = h("div", { style: { display: "flex", gap: "4px", marginBottom: "4px" } },
+    st.arr.map((v, x) => {
+      const [bg, fg] = cellColors(st, x);
+      return h("div", { class: "mono", style: { flex: "1", height: "48px", display: "flex",
+        alignItems: "center", justifyContent: "center", borderRadius: "6px",
+        border: "1px solid #2A3752", background: bg, color: fg, fontSize: "15px", fontWeight: "600" } }, String(v));
+    }));
+
+  /* i / j pointer row */
+  const ptrs = h("div", { style: { display: "flex", gap: "4px", marginBottom: "16px", height: "18px" } },
+    st.arr.map((_, x) => {
+      let lbl = "";
+      if (st.i === x) lbl = "↑ i";
+      if (st.j === x) lbl += (lbl ? " " : "") + "↑ j";
+      return h("div", { class: "mono", style: { flex: "1", textAlign: "center", fontSize: "12px",
+        color: C.green, fontWeight: "600" } }, lbl);
+    }));
+
+  const legend = h("div", { style: { fontSize: "13px", color: C.mute, marginBottom: "8px" } },
+    "coral = pivot parked at lo · amber = element under the moving pointer · green = final position");
+
+  /* scan rules */
+  const rules = h("div", { class: "panel", style: { padding: "10px 12px", marginBottom: "12px" } }, [
+    h("div", { style: { fontSize: "13px", color: C.mute, marginBottom: "3px" } },
+      "Scan rules (strict comparisons, both pointers stop on equal values)"),
+    h("div", { class: "mono", style: { fontSize: "13.5px", color: C.code } },
+      "i: move right while A[++i] < v · j: move left while A[--j] > v · crossed? pivot → j : swap A[i], A[j]"),
+  ]);
+
+  const message = h("div", { style: { fontSize: "14px", color: C.mute, minHeight: "44px", marginBottom: "12px" } }, st.msg);
+
+  /* step-synced pseudocode card */
+  const hlLines = HILITE[st.k] || [];
+  const codeCard = h("div", { class: "panel", style: { padding: "10px 12px", marginBottom: "12px", overflowX: "auto" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "6px" } }, "The algorithm in words"),
+    h("div", {}, CODE.map((l, k) => {
+      const on = hlLines.includes(k);
+      return h("div", { class: "mono", style: {
+        fontSize: "12.5px", lineHeight: "1.6", whiteSpace: "pre", padding: "1px 6px",
+        background: on ? "rgba(240,167,60,0.14)" : "transparent",
+        borderLeft: on ? "3px solid #F0A73C" : "3px solid transparent",
+        color: on ? C.ink : C.code, fontWeight: on ? "600" : "400" } }, [
+        h("span", { style: { color: C.mute } }, String(k + 1).padStart(2, " ") + "  "),
+        l,
+      ]);
+    })),
+  ]);
+
+  /* controls */
+  const controls = h("div", { style: { display: "flex", alignItems: "center", gap: "8px",
+    flexWrap: "wrap", marginBottom: "16px" } }, [
+    btn(state.playing ? "Pause" : "Play", () => {
+      if (state.playing){ state.playing = false; render(); return; }
+      if (atEnd) state.idx = 0;
+      state.playing = true; render();
+    }, { style: { borderColor: C.blue, background: C.blue, color: C.onDark } }),
+    btn("Step →", () => { state.playing = false; if (!atEnd) state.idx += 1; render(); }, { disabled: atEnd ? "disabled" : null }),
+    btn("Reset", () => { state.playing = false; state.idx = 0; render(); }),
+    btn("New array", () => { state.base = newArray(); state.seed += 1; state.idx = 0; state.playing = false; render(); }),
+    btn("All equal", () => { state.base = Array(N).fill(50); state.seed += 1; state.idx = 0; state.playing = false; render(); }),
+    btn("Re-run (new pivots)", () => { state.seed += 1; state.idx = 0; state.playing = false; render(); }),
+    h("label", { class: "lbl", style: { marginLeft: "8px" } }, "speed"),
+    h("input", { type: "range", min: "1", max: "10", value: String(state.speed), style: { width: "120px" },
+      oninput: (e) => {
+        state.speed = +e.target.value;
+        if (state.playing && !atEnd){
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(() => { state.idx += 1; render(); }, 1000 - state.speed * 88);
+        }
+      } }),
+  ]);
+
+  /* stats */
+  const stat = (label, value) => h("div", { class: "panel", style: { padding: "12px 16px", flex: "1 1 140px" } }, [
+    h("div", { style: { fontSize: "13px", color: C.mute } }, label),
+    h("div", { class: "mono", style: { fontSize: "24px", fontWeight: "600", marginTop: "2px" } }, String(value)),
+  ]);
+  const stats = h("div", { style: { display: "flex", gap: "12px", flexWrap: "wrap" } }, [
+    stat("Comparisons", st.comps),
+    stat("Swaps", st.swaps),
+    stat("Max recursion depth", st.maxDepth),
+  ]);
+
+  const header = h("div", {}, [
+    h("h1", {}, "Quicksort: Sedgewick partition"),
+    h("p", { class: "sub" }, "The CS161 two-pointer partition. A random pivot is parked at lo, both ends scan inward with strict comparisons, and the pivot drops into place where the pointers cross. Try “All equal” to see why strict scans keep duplicate-heavy inputs balanced. This is the partition from lecture and the reference sheet: random pivot, parked at lo, two crossing pointers."),
+  ]);
+
+  const arrayCard = h("div", { class: "panel", style: { padding: "16px", marginBottom: "16px" } }, [legend, cells, ptrs, rules, message, codeCard, controls, stats]);
+
+  const wrap = h("div", { class: "wrap" }, [header, arrayCard]);
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(wrap);
+}
+
+render();
+</script>
+</body>
+</html>

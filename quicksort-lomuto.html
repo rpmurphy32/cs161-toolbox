@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quicksort: Lomuto Partition · CS161</title>
+<style>
+  :root{
+    --bg:#0B1120; --panel:#151E31; --ink:#E6EDF7; --mute:#8194B0; --line:#2A3752;
+    --blue:#5B8DEF; --green:#2DD4A0; --amber:#F0A73C; --coral:#FF6B6B;
+    --fill:#10192B; --onDark:#0B1120; --code:#A7B6CE;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg)}
+  body{color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 56px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;color:var(--mute);margin:6px 0 0}
+  .legend{font-size:12px;color:var(--mute);margin:10px 0 0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;border:1px solid var(--line);
+    background:transparent;color:var(--ink);cursor:pointer;transition:opacity .15s,border-color .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  input[type=range]{accent-color:var(--blue)}
+  .cells{display:flex;gap:4px}
+  .cell{flex:1;height:48px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid #2A3752;
+    font-size:15px;font-weight:600;min-width:0}
+  .ptrs{display:flex;gap:4px;height:18px;margin-top:4px}
+  .ptr{flex:1;text-align:center;font-size:12px;font-weight:600;color:var(--green)}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px;flex:1 1 140px}
+  .stat .k{font-size:13px;color:var(--mute)}
+  .stat .v{font-size:24px;font-weight:600}
+  @media (max-width:560px){.wrap{padding:24px 14px 40px}.cell{height:42px;font-size:13px}}
+  @media (prefers-reduced-motion:reduce){.btn{transition:none}}
+</style>
+</head>
+<body>
+<div id="root" class="wrap"></div>
+<script>
+"use strict";
+
+/* ---- palette ---- */
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B",
+  fill:"#10192B", dimTxt:"#4A5A78", onDark:"#0B1120", code:"#A7B6CE",
+};
+
+/* ---- data ---- */
+const N = 8;
+const newArray = () => Array.from({ length: N }, () => Math.floor(Math.random() * 90) + 10);
+const sortedArray = () => Array.from({ length: N }, (_, k) => (k + 1) * 11);
+
+/* ---- step generator (logic verbatim; message copy de-em-dashed) ---- */
+function genSteps(a) {
+  const s = [], arr = a.slice(), sorted = new Set();
+  let comps = 0, swaps = 0, maxDepth = 0;
+  const snap = o => s.push({ arr: arr.slice(), sorted: new Set(sorted), comps, swaps, maxDepth, ...o });
+
+  function qs(lo, hi, depth) {
+    maxDepth = Math.max(maxDepth, depth);
+    if (lo > hi) return;
+    if (lo === hi) { sorted.add(lo); snap({ lo, hi, k: "base", msg: `Subarray [${lo}..${hi}] has one element, already in place` }); return; }
+    const p = arr[hi];
+    snap({ lo, hi, piv: hi, i: lo - 1, k: "pick", msg: `quicksort([${lo}..${hi}], depth ${depth}): pivot = ${p} (last element)` });
+    let i = lo - 1;
+    for (let j = lo; j < hi; j++) {
+      comps++;
+      snap({ lo, hi, piv: hi, i, j, cmp: true, k: "scan", msg: `Compare arr[${j}]=${arr[j]} with pivot ${p}` });
+      if (arr[j] < p) {
+        i++;
+        if (i !== j) {
+          [arr[i], arr[j]] = [arr[j], arr[i]];
+          swaps++;
+          snap({ lo, hi, piv: hi, i, j, k: "grow", msg: `${arr[i]} < ${p} → grow the < zone: swap arr[${i}] ↔ arr[${j}]` });
+        } else {
+          snap({ lo, hi, piv: hi, i, j, k: "grow", msg: `${arr[j]} < ${p} → already at the boundary, extend < zone (i = ${i})` });
+        }
+      }
+    }
+    [arr[i + 1], arr[hi]] = [arr[hi], arr[i + 1]];
+    swaps++;
+    sorted.add(i + 1);
+    snap({ lo, hi, i, k: "place", msg: `Place pivot: swap into index ${i + 1}. Pivot ${p} is now in its FINAL sorted position` });
+    qs(lo, i, depth + 1);
+    qs(i + 2, hi, depth + 1);
+  }
+  qs(0, arr.length - 1, 1);
+  snap({ sorted: new Set(arr.map((_, x) => x)), done: true, k: "done", msg: "Sorted. Every element was placed by some partition" });
+  return s;
+}
+
+/* ---- pseudocode: original plain-English paraphrase of the Lomuto scheme ---- */
+const CODE = [
+  "take the last element of the range as the pivot",
+  "let i mark the right edge of a “smaller than pivot” zone, empty at first",
+  "sweep j left to right over everything before the pivot:",
+  "    if arr[j] is smaller than the pivot,",
+  "        widen the zone by one slot and swap arr[j] into it",
+  "after the sweep, swap the pivot to just past the zone - that spot is final",
+  "recurse on the two sides (a lone element is already sorted)",
+];
+const HILITE = { pick: [0, 1], scan: [2, 3], grow: [4], place: [5, 6], base: [6], done: [] };
+
+/* ---- tiny dom helper ---- */
+function h(tag, props, kids) {
+  const e = document.createElement(tag);
+  props = props || {};
+  for (const k in props) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.className = v;
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+
+/* ---- state ---- */
+const state = { base: newArray(), idx: 0, playing: false, speed: 4 };
+let steps = genSteps(state.base);
+let playTimer = null;
+
+function rebuild() { steps = genSteps(state.base); state.idx = 0; state.playing = false; }
+
+function render() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  if (state.idx > steps.length - 1) state.idx = steps.length - 1;
+  if (state.idx < 0) state.idx = 0;
+  const st = steps[state.idx];
+  const inR = x => st.lo !== undefined && x >= st.lo && x <= st.hi;
+
+  if (state.playing) {
+    if (state.idx >= steps.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.idx += 1; render(); }, 1000 - state.speed * 88);
+  }
+
+  /* array cells */
+  const cells = st.arr.map((v, x) => {
+    let bg = "#1C2942", txt = C.code;
+    if (st.sorted.has(x)) { bg = C.green; txt = C.onDark; }
+    else if (st.lo !== undefined && !inR(x)) { bg = C.fill; txt = C.dimTxt; }
+    else if (st.piv === x) { bg = C.coral; txt = C.onDark; }
+    else if (st.cmp && st.j === x) { bg = C.amber; txt = C.onDark; }
+    else if (st.i !== undefined && x <= st.i && inR(x)) { bg = C.blue; txt = C.onDark; }
+    return h("div", { class: "cell mono", style: { background: bg, color: txt } }, String(v));
+  });
+
+  const ptrs = st.arr.map((_, x) => {
+    let lbl = "";
+    if (st.i === x && st.i >= (st.lo ?? 0)) lbl = "↑ i";
+    if (st.j === x) lbl += (lbl ? " " : "") + "↑ j";
+    return h("div", { class: "ptr mono" }, lbl);
+  });
+
+  /* controls */
+  const btn = (label, onclick, extra) => h("button", Object.assign({ class: "btn", onclick }, extra || {}), label);
+  const controls = h("div", { class: "row", style: { marginTop: "14px" } }, [
+    btn(state.playing ? "Pause" : "Play", () => {
+      if (state.playing) { state.playing = false; render(); return; }
+      if (state.idx >= steps.length - 1) state.idx = 0;
+      state.playing = true; render();
+    }, { style: { borderColor: C.blue, background: C.blue, color: C.onDark } }),
+    btn("Step", () => { state.playing = false; if (state.idx < steps.length - 1) state.idx += 1; render(); },
+      { disabled: state.idx >= steps.length - 1 ? "disabled" : null }),
+    btn("Reset", () => { state.playing = false; state.idx = 0; render(); }),
+    btn("New array", () => { state.base = newArray(); rebuild(); render(); }),
+    btn("Sorted input (worst case)", () => { state.base = sortedArray(); rebuild(); render(); }),
+    h("label", { class: "sub", style: { marginLeft: "6px" } }, "Speed"),
+    h("input", {
+      type: "range", min: "1", max: "10", value: String(state.speed),
+      style: { width: "120px" },
+      oninput: (e) => { state.speed = +e.target.value; },
+    }),
+    h("span", { class: "sub", style: { marginLeft: "auto" } }, "step " + (state.idx + 1) + " / " + steps.length),
+  ]);
+
+  /* stat tiles */
+  const stat = (k, v) => h("div", { class: "stat" }, [h("div", { class: "k" }, k), h("div", { class: "v mono" }, String(v))]);
+
+  const view = h("div", {}, [
+    h("h1", {}, "Quicksort: Lomuto Partition"),
+    h("p", { class: "sub" }, "Pivot is the last element. Everything smaller gets swapped into the < zone, then the pivot lands in its final spot. This page shows the Lomuto partition - an alternative scheme. The lecture and reference sheet use the two-pointer partition shown on the Sedgewick page."),
+    h("p", { class: "legend" }, "coral = pivot · amber = element being compared · blue = “< pivot” zone · green = final position"),
+
+    h("div", { class: "panel", style: { padding: "12px", marginTop: "16px" } }, [
+      h("div", { class: "cells" }, cells),
+      h("div", { class: "ptrs" }, ptrs),
+    ]),
+
+    h("div", { class: "panel", style: { padding: "10px 12px", marginTop: "12px" } }, [
+      h("div", { class: "sub", style: { marginBottom: "2px" } }, "Invariant"),
+      h("div", { class: "mono", style: { fontSize: "13px", color: C.mute } },
+        "arr[lo..i] < pivot · arr[i+1..j−1] ≥ pivot · arr[j..hi−1] unexamined · arr[hi] = pivot"),
+    ]),
+
+    h("div", { class: "mono", style: { fontSize: "14px", color: C.mute, minHeight: "44px", marginTop: "12px" } }, st.msg),
+
+    /* step-synced pseudocode card */
+    h("div", { class: "panel", style: { padding: "10px 12px", marginTop: "12px", overflowX: "auto" } }, [
+      h("div", { style: { fontSize: "11px", textTransform: "uppercase", letterSpacing: ".06em",
+        color: C.mute, marginBottom: "6px" } }, "The algorithm in words"),
+      h("div", {}, CODE.map((l, k) => {
+        const on = (HILITE[st.k] || []).includes(k);
+        return h("div", { class: "mono", style: {
+          fontSize: "12.5px", lineHeight: "1.6", whiteSpace: "pre", padding: "1px 6px",
+          background: on ? "rgba(240,167,60,0.14)" : "transparent",
+          borderLeft: on ? "3px solid #F0A73C" : "3px solid transparent",
+          color: on ? C.ink : C.code, fontWeight: on ? "600" : "400" } }, [
+          h("span", { style: { color: C.mute } }, String(k + 1) + "  "),
+          l,
+        ]);
+      })),
+    ]),
+
+    controls,
+
+    h("div", { class: "row", style: { marginTop: "16px", alignItems: "stretch" } }, [
+      stat("Comparisons", st.comps),
+      stat("Swaps", st.swaps),
+      stat("Max recursion depth", st.maxDepth),
+    ]),
+  ]);
+
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(view);
+}
+
+render();
+</script>
+</body>
+</html>

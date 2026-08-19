@@ -1,0 +1,823 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tarjan's Algorithm · CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0B1120}
+  #root{min-height:100vh}
+  body{color:#E6EDF7;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:1200px;margin:0 auto;padding:20px 16px 48px;display:flex;flex-direction:column;gap:14px}
+  .panel{background:#151E31;border:1px solid #2A3752;border-radius:10px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;border:1px solid #2A3752;background:#151E31;color:#E6EDF7;cursor:pointer;transition:opacity .15s,border-color .15s,background .15s}
+  .btn:hover:not(:disabled){border-color:#3A4763}
+  .btn:disabled{opacity:.3;cursor:not-allowed}
+  .btn.active{background:#5B8DEF;border-color:#5B8DEF;color:#0B1120}
+  .btn.go{background:#5B8DEF;border-color:#5B8DEF;color:#0B1120;min-width:86px;text-align:center}
+  .btn.on{background:#2DD4A0;border-color:#2DD4A0;color:#0B1120}
+  .btn:focus-visible,input:focus-visible{outline:2px solid #5B8DEF;outline-offset:2px}
+  input[type=range]{accent-color:#5B8DEF;height:18px}
+  input[type=number]{background:#0F1830;border:1px solid #2A3752;border-radius:4px;color:#E6EDF7;padding:3px 6px;font-family:ui-monospace,monospace;font-size:12px;width:76px}
+  input[type=checkbox]{accent-color:#5B8DEF}
+  h1{font-size:20px;font-weight:600;margin:0;color:#E6EDF7;letter-spacing:-.01em}
+  .sub{font-size:13px;color:#8194B0;margin:4px 0 0}
+  .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#8194B0}
+  .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  svg.graph{width:100%;height:auto;max-height:470px;display:block}
+  .svgwrap{overflow-x:auto}
+  .grid3{display:grid;grid-template-columns:1fr;gap:14px}
+  .col{display:flex;flex-direction:column;gap:12px}
+  @media(min-width:1024px){.grid3{grid-template-columns:2fr 1fr;align-items:start}}
+  table{width:100%;border-collapse:collapse;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+  th{font-weight:400;color:#8194B0;font-size:11px;text-align:right;padding-bottom:4px}
+  th:first-child{text-align:left}
+  td{padding:2px 0}
+  .chip{padding:3px 8px;border-radius:4px;font-family:ui-monospace,monospace;font-size:13px;border:1px solid #2A3752;background:#1C2942;color:#CBD5E1}
+  @media (prefers-reduced-motion: reduce){*{transition:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+"use strict";
+
+/* ─────────────────────────── palette ─────────────────────────── */
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B",
+  node:"#4A5A78", edge:"#6E82A6", code:"#A7B6CE", onDark:"#0B1120", visitFill:"#1C2942",
+};
+
+/* ─────────────────────────── utilities (verbatim) ─────────────────────────── */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+const SCC_COLORS = [
+  "#f472b6", "#38bdf8", "#a3e635", "#fbbf24",
+  "#c084fc", "#34d399", "#fb7185", "#60a5fa",
+];
+
+/* ───────────────────── ground truth (Kosaraju, verbatim) ───────────────────── */
+function kosaraju(n, adj) {
+  const seen = Array(n).fill(false);
+  const order = [];
+  for (let s = 0; s < n; s++) {
+    if (seen[s]) continue;
+    const stack = [[s, 0]];
+    seen[s] = true;
+    while (stack.length) {
+      const top = stack[stack.length - 1];
+      if (top[1] < adj[top[0]].length) {
+        const u = adj[top[0]][top[1]++];
+        if (!seen[u]) { seen[u] = true; stack.push([u, 0]); }
+      } else { order.push(top[0]); stack.pop(); }
+    }
+  }
+  const radj = Array.from({ length: n }, () => []);
+  for (let v = 0; v < n; v++) for (const u of adj[v]) radj[u].push(v);
+  const comp = Array(n).fill(-1);
+  let c = 0;
+  for (let i = order.length - 1; i >= 0; i--) {
+    const v = order[i];
+    if (comp[v] !== -1) continue;
+    const st = [v]; comp[v] = c;
+    while (st.length) {
+      const x = st.pop();
+      for (const y of radj[x]) if (comp[y] === -1) { comp[y] = c; st.push(y); }
+    }
+    c++;
+  }
+  const groups = Array.from({ length: c }, () => []);
+  comp.forEach((g, v) => groups[g].push(v));
+  return groups.map((g) => g.slice().sort((a, b) => a - b));
+}
+
+function samePartition(a, b) {
+  const key = (parts) =>
+    parts.map((p) => p.slice().sort((x, y) => x - y).join(",")).sort().join("|");
+  return key(a) === key(b);
+}
+
+/* ─────────────────────────── the simulator (verbatim logic; em dashes removed from messages) ─────────────────────────── */
+const LINES = [
+  { id: "sig", text: "def visit(node):", indent: 0 },
+  { id: "num", text: "node.number = clock;  node.low = clock;  clock += 1", indent: 1 },
+  { id: "push", text: "stack.append(node)", indent: 1 },
+  { id: "for", text: "for other in node.outgoing:", indent: 1 },
+  { id: "guard", text: "if other.scc_root is not None:  continue", indent: 2 },
+  { id: "unvis", text: "if other.number is None:", indent: 2 },
+  { id: "rec", text: "visit(other)", indent: 3 },
+  { id: "cmp", text: "if other.low < node.low:", indent: 2 },
+  { id: "set", text: "node.low = other.low", indent: 3 },
+  { id: "root", text: "if node.low == node.number:      # node roots an SCC", indent: 1 },
+  { id: "while", text: "while True:", indent: 2 },
+  { id: "pop", text: "u = stack.pop()", indent: 3 },
+  { id: "assign", text: "u.scc_root = node", indent: 3 },
+  { id: "brk", text: "if u is node: break", indent: 3 },
+];
+
+function simulate(n, adj, guardOn) {
+  const number = Array(n).fill(null);
+  const low = Array(n).fill(null);
+  const sccRoot = Array(n).fill(null);
+  const stack = [];
+  const sccs = [];
+  const callStack = [];
+  const steps = [];
+  let clock = 0;
+  let guardSaves = 0;
+
+  const nm = (v) => LABELS[v];
+
+  const snap = (o) => {
+    steps.push({
+      number: number.slice(),
+      low: low.slice(),
+      sccRoot: sccRoot.slice(),
+      stack: stack.slice(),
+      sccs: sccs.map((s) => s.slice()),
+      callStack: callStack.map((f) => ({ ...f })),
+      clock,
+      ...o,
+    });
+  };
+
+  snap({ line: null, kind: "start", msg: "Ready. DFS from each unvisited node, tie-break alphabetically." });
+
+  function visit(v) {
+    number[v] = clock; low[v] = clock; clock++;
+    stack.push(v);
+    callStack.push({ node: v, edgeIdx: -1 });
+    snap({
+      line: "num", kind: "enter", node: v,
+      msg: `Visit ${nm(v)}. number = low = ${number[v]}. Push ${nm(v)} onto the stack.`,
+    });
+
+    for (let i = 0; i < adj[v].length; i++) {
+      const u = adj[v][i];
+      callStack[callStack.length - 1].edgeIdx = i;
+      snap({
+        line: "for", kind: "edge", node: v, edge: [v, u],
+        msg: `Edge ${nm(v)} → ${nm(u)}.`,
+      });
+
+      if (sccRoot[u] !== null) {
+        if (guardOn) {
+          snap({
+            line: "guard", kind: "skip", node: v, edge: [v, u],
+            msg: `${nm(u)} already sits in a finished SCC (root ${nm(sccRoot[u])}). That component is treated as deleted - ignored, nothing actually removed - so skip this edge.`,
+          });
+          continue;
+        } else if (low[u] < low[v]) {
+          guardSaves++;
+        }
+      }
+
+      if (number[u] === null) {
+        snap({
+          line: "rec", kind: "recurse", node: v, edge: [v, u],
+          msg: `${nm(u)} is unvisited (number is None). Recurse into ${nm(u)}.`,
+        });
+        visit(u);
+        callStack[callStack.length - 1].edgeIdx = i;
+      }
+
+      if (low[u] < low[v]) {
+        const old = low[v];
+        low[v] = low[u];
+        snap({
+          line: "set", kind: "update", node: v, edge: [v, u],
+          msg: `low[${nm(u)}] = ${low[u]} < low[${nm(v)}] = ${old}. ${nm(v)} can reach whatever ${nm(u)} can reach, so low[${nm(v)}] ← ${low[v]}.`,
+        });
+      } else {
+        snap({
+          line: "cmp", kind: "noupdate", node: v, edge: [v, u],
+          msg: `low[${nm(u)}] = ${low[u]} is not below low[${nm(v)}] = ${low[v]}. No update.`,
+        });
+      }
+    }
+
+    callStack[callStack.length - 1].edgeIdx = -1;
+    const isRoot = low[v] === number[v];
+    snap({
+      line: "root", kind: "roottest", node: v, isRoot,
+      msg: isRoot
+        ? `All of ${nm(v)}'s out-edges are done. low[${nm(v)}] = ${low[v]} = number[${nm(v)}]. The earliest node anything below could reach is ${nm(v)} itself, so ${nm(v)} roots an SCC.`
+        : `All of ${nm(v)}'s out-edges are done. low[${nm(v)}] = ${low[v]} ≠ number[${nm(v)}] = ${number[v]}. ${nm(v)}'s subtree (possibly ${nm(v)} itself, via its own out-edge) reaches back past ${nm(v)}, so ${nm(v)} is not the root. Return.`,
+    });
+
+    if (isRoot) {
+      const comp = [];
+      while (true) {
+        const u = stack.pop();
+        sccRoot[u] = v;
+        comp.push(u);
+        snap({
+          line: u === v ? "brk" : "assign", kind: "pop", node: v, popped: u,
+          pending: comp.slice(),
+          msg: u === v
+            ? `Pop ${nm(u)}, that is ${nm(v)} itself, so the component is complete.`
+            : `Pop ${nm(u)} off the stack. scc_root[${nm(u)}] = ${nm(v)}.`,
+        });
+        if (u === v) break;
+      }
+      comp.reverse();
+      sccs.push(comp);
+      snap({
+        line: "brk", kind: "sccdone", node: v, scc: comp,
+        msg: `SCC #${sccs.length} found: {${comp.map(nm).join(", ")}}, rooted at ${nm(v)}. It was a sink of what remains. Now treat it as deleted and keep going.`,
+      });
+    }
+
+    callStack.pop();
+    const parent = callStack.length ? callStack[callStack.length - 1].node : null;
+    snap({
+      line: null, kind: "return", node: parent,
+      msg: parent === null
+        ? `Return from ${nm(v)} to the top level.`
+        : `Return from ${nm(v)} to ${nm(parent)}.`,
+    });
+  }
+
+  for (let s = 0; s < n; s++) {
+    if (number[s] !== null) continue;
+    snap({ line: null, kind: "outer", node: s, msg: `Outer loop: ${nm(s)} is still unvisited. Start a new DFS here.` });
+    visit(s);
+  }
+
+  snap({
+    line: null, kind: "done",
+    msg: `Done. ${sccs.length} strongly connected component${sccs.length === 1 ? "" : "s"}, discovered in reverse topological order of the condensation graph.`,
+  });
+
+  return { steps, sccs, guardSaves };
+}
+
+/* ─────────────────────────── graphs (verbatim) ─────────────────────────── */
+function buildAdj(n, edges) {
+  const adj = Array.from({ length: n }, () => []);
+  for (const [a, b] of edges) if (a !== b && !adj[a].includes(b)) adj[a].push(b);
+  adj.forEach((l) => l.sort((x, y) => x - y));
+  return adj;
+}
+
+const E = (s) => s.split(" ").map((p) => [LABELS.indexOf(p[0]), LABELS.indexOf(p[1])]);
+
+const CURATED = {
+  lecture: {
+    name: "Friday's lecture graph",
+    n: 13,
+    edges: E("AB BA BC BF CD DE ED DG DF DI GC FH HI HJ JF IK KL LM MI"),
+    note: "The 8/7 board. Preorder A B C D E F H I K L M J G. Watch E. Its low ends at 3 even though E can reach C at 2.",
+    pos: {
+      A: [60, 60], B: [60, 165], C: [195, 55], D: [300, 120], E: [200, 195],
+      G: [330, 25], F: [430, 195], J: [430, 85], H: [525, 130],
+      I: [610, 220], K: [700, 175], L: [700, 80], M: [610, 30],
+    },
+  },
+  cycle: {
+    name: "One big cycle",
+    n: 5,
+    edges: E("AB BC CD DE EA CA"),
+    note: "Everything is one SCC. A is stepped on first, so A ends up the root and low collapses to 0 everywhere.",
+  },
+  dag: {
+    name: "Pure DAG",
+    n: 6,
+    edges: E("AB AC BD CD DE CE EF"),
+    note: "No cycles, so every node is its own SCC and low always equals number. Pops happen one node at a time, in reverse topological order.",
+  },
+  guard: {
+    name: "Guard breaker",
+    n: 5,
+    edges: E("AB BC CB AD DE ED DB"),
+    note: "Turn off the scc_root guard on this one. D's edge into the finished SCC {B,C} drags low[D] down to 1, D never passes the root test, and {A,D,E} gets merged into one bogus component.",
+  },
+  forest: {
+    name: "Two starting points",
+    n: 6,
+    edges: E("AB BA CD DC DE EC FA"),
+    note: "A cannot reach C, D, E, or F, so the DFS from A finishes early and the outer loop must restart from a still-unvisited node. F's edge into the finished {A,B} component gets guard-skipped.",
+  },
+  nested: {
+    name: "Cross edges into finished sinks",
+    n: 8,
+    edges: E("AB BC CA BD DE ED DF FG GF FH HD AE"),
+    note: "Several components hang off one another. Good for watching a finished sink get ignored while its parent keeps scanning edges.",
+  },
+};
+
+function genRandom(seed, nNodes, nSccs, density) {
+  const rnd = mulberry32(seed);
+  const k = Math.max(1, Math.min(nSccs, nNodes));
+  const sizes = Array(k).fill(1);
+  for (let i = k; i < nNodes; i++) sizes[Math.floor(rnd() * k)]++;
+  const ids = Array.from({ length: nNodes }, (_, i) => i);
+  for (let i = ids.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+  }
+  const groups = [];
+  let p = 0;
+  for (const s of sizes) { groups.push(ids.slice(p, p + s)); p += s; }
+
+  const edges = [];
+  for (const g of groups) {
+    if (g.length === 1) continue;
+    for (let i = 0; i < g.length; i++) edges.push([g[i], g[(i + 1) % g.length]]);
+    const chords = Math.floor(rnd() * g.length * 0.6);
+    for (let c = 0; c < chords; c++) {
+      const a = g[Math.floor(rnd() * g.length)];
+      const b = g[Math.floor(rnd() * g.length)];
+      if (a !== b) edges.push([a, b]);
+    }
+  }
+  for (let i = 0; i < k; i++) {
+    for (let j = i + 1; j < k; j++) {
+      const pr = j === i + 1 ? Math.max(density, 0.7) : density * 0.55;
+      if (rnd() < pr) {
+        const a = groups[i][Math.floor(rnd() * groups[i].length)];
+        const b = groups[j][Math.floor(rnd() * groups[j].length)];
+        edges.push([a, b]);
+      }
+    }
+  }
+  return { n: nNodes, edges, name: `Random graph · seed ${seed}` };
+}
+
+/* ─────────────────────────── layout (verbatim) ─────────────────────────── */
+const VW = 780, VH = 400, R = 21;
+
+function forceLayout(n, edges, seed) {
+  const rnd = mulberry32(seed ^ 0x9e37);
+  const pos = Array.from({ length: n }, () => ({ x: rnd() * VW, y: rnd() * VH }));
+  const k = Math.sqrt((VW * VH) / Math.max(n, 1)) * 0.72;
+  let t = VW / 7;
+  for (let it = 0; it < 420; it++) {
+    const disp = pos.map(() => ({ x: 0, y: 0 }));
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let dx = pos[i].x - pos[j].x, dy = pos[i].y - pos[j].y;
+        let d = Math.hypot(dx, dy);
+        if (d < 0.5) { dx = rnd() - 0.5; dy = rnd() - 0.5; d = 0.5; }
+        const f = (k * k) / d;
+        disp[i].x += (dx / d) * f; disp[i].y += (dy / d) * f;
+        disp[j].x -= (dx / d) * f; disp[j].y -= (dy / d) * f;
+      }
+    }
+    for (const [a, b] of edges) {
+      if (a === b) continue;
+      let dx = pos[a].x - pos[b].x, dy = pos[a].y - pos[b].y;
+      const d = Math.hypot(dx, dy) || 0.5;
+      const f = (d * d) / k;
+      disp[a].x -= (dx / d) * f; disp[a].y -= (dy / d) * f;
+      disp[b].x += (dx / d) * f; disp[b].y += (dy / d) * f;
+    }
+    for (let i = 0; i < n; i++) {
+      const d = Math.hypot(disp[i].x, disp[i].y) || 1;
+      pos[i].x += (disp[i].x / d) * Math.min(d, t);
+      pos[i].y += (disp[i].y / d) * Math.min(d, t);
+    }
+    t *= 0.985;
+  }
+  const xs = pos.map((p) => p.x), ys = pos.map((p) => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const pad = R + 16;
+  const sx = (VW - 2 * pad) / Math.max(maxX - minX, 1);
+  const sy = (VH - 2 * pad) / Math.max(maxY - minY, 1);
+  const s = Math.min(sx, sy);
+  return pos.map((p) => ({
+    x: pad + (p.x - minX) * s + (VW - 2 * pad - (maxX - minX) * s) / 2,
+    y: pad + (p.y - minY) * s + (VH - 2 * pad - (maxY - minY) * s) / 2,
+  }));
+}
+
+function edgePath(a, b, bow) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const nx = -dy / d, ny = dx / d;
+  const mx = (a.x + b.x) / 2 + nx * bow;
+  const my = (a.y + b.y) / 2 + ny * bow;
+  const trim = (p, q, r) => {
+    const ddx = q.x - p.x, ddy = q.y - p.y;
+    const dd = Math.hypot(ddx, ddy) || 1;
+    return { x: p.x + (ddx / dd) * r, y: p.y + (ddy / dd) * r };
+  };
+  const s = trim(a, { x: mx, y: my }, R + 2);
+  const e = trim(b, { x: mx, y: my }, R + 17);
+  const ang = Math.atan2(e.y - my, e.x - mx) * (180 / Math.PI);
+  return { d: `M${s.x},${s.y} Q${mx},${my} ${e.x},${e.y}`, tip: e, ang, mid: { x: mx, y: my } };
+}
+
+/* ─────────────────────────── dom helpers ─────────────────────────── */
+const SVGNS = "http://www.w3.org/2000/svg";
+function mk(ns, tag, props, kids) {
+  const e = ns ? document.createElementNS(ns, tag) : document.createElement(tag);
+  props = props || {};
+  for (const k in props) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.setAttribute("class", v);
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+const h = (tag, props, kids) => mk(null, tag, props, kids);
+const S = (tag, props, kids) => mk(SVGNS, tag, props, kids);
+
+/* ─────────────────────────── state + derived ─────────────────────────── */
+const state = {
+  graphKey: "lecture", seed: 4271,
+  randCfg: { nodes: 10, sccs: 4, density: 0.5 },
+  layoutSeed: 1, guardOn: true,
+  step: 0, playing: false, speed: 700,
+  predict: false, prompt: null, score: { right: 0, total: 0 },
+  showTable: true,
+};
+
+let graph, adj, positions, sim, truth, correctOutput, playTimer = null;
+
+function computePositions() {
+  if (graph.pos) {
+    positions = Array.from({ length: graph.n }, (_, i) => {
+      const p = graph.pos[LABELS[i]];
+      return { x: p[0] + 20, y: p[1] + 40 };
+    });
+  } else {
+    positions = forceLayout(graph.n, graph.edges,
+      (state.graphKey === "random" ? state.seed : state.graphKey.length * 7919) + state.layoutSeed * 131);
+  }
+}
+
+function rebuildGraph() {
+  if (state.graphKey === "random") {
+    graph = genRandom(state.seed, state.randCfg.nodes, state.randCfg.sccs, state.randCfg.density);
+  } else {
+    const g = CURATED[state.graphKey];
+    graph = { n: g.n, edges: g.edges, name: g.name, note: g.note, pos: g.pos };
+  }
+  adj = buildAdj(graph.n, graph.edges);
+  computePositions();
+  sim = simulate(graph.n, adj, state.guardOn);
+  truth = kosaraju(graph.n, adj);
+  correctOutput = samePartition(sim.sccs, truth);
+  state.step = 0; state.playing = false; state.prompt = null;
+}
+
+/* ─────────────────────────── stepping ─────────────────────────── */
+function advance() { state.step = Math.min(state.step + 1, sim.steps.length - 1); }
+
+function tryAdvance() {
+  if (state.prompt && !state.prompt.answered) return;
+  if (state.prompt && state.prompt.answered) { state.prompt = null; advance(); render(); return; }
+  const nxt = sim.steps[state.step + 1];
+  if (state.predict && nxt && nxt.kind === "roottest") {
+    state.playing = false;
+    state.prompt = { idx: state.step + 1, answered: false, correct: null };
+    render(); return;
+  }
+  advance(); render();
+}
+
+function answerPredict(guess) {
+  const target = sim.steps[state.prompt.idx];
+  const right = guess === target.isRoot;
+  state.score = { right: state.score.right + (right ? 1 : 0), total: state.score.total + 1 };
+  state.prompt = { ...state.prompt, answered: true, correct: right, was: target.isRoot };
+  advance(); render();
+}
+
+/* ─────────────────────────── render ─────────────────────────── */
+function render() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  if (state.step > sim.steps.length - 1) state.step = sim.steps.length - 1;
+  if (state.step < 0) state.step = 0;
+
+  const st = sim.steps[state.step];
+  const atEnd = state.step >= sim.steps.length - 1;
+
+  if (state.playing && !atEnd) playTimer = setTimeout(() => { if (state.playing) tryAdvance(); }, state.speed);
+  else if (atEnd) state.playing = false;
+
+  const sccIndexOf = (v) => { for (let i = 0; i < st.sccs.length; i++) if (st.sccs[i].includes(v)) return i; return -1; };
+  const onStack = (v) => st.stack.includes(v);
+  const activeNode = st.node;
+  const activeEdge = st.edge;
+
+  const reverseSet = new Set();
+  for (const [a, b] of graph.edges) if (adj[b] && adj[b].includes(a)) reverseSet.add(`${a}-${b}`);
+
+  /* ---- header ---- */
+  const header = h("div", { class: "row", style: { justifyContent: "space-between", alignItems: "baseline" } }, [
+    h("div", {}, [
+      h("h1", {}, "Tarjan's algorithm: strongly connected components"),
+      h("p", { class: "sub" }, [
+        "DFS with ", h("span", { class: "mono", style: { color: C.code } }, "number"), " and ",
+        h("span", { class: "mono", style: { color: C.code } }, "low"),
+        ". Each time a node's low equals its own number, the tail of the stack is a sink component of whatever is left. O(n + m).",
+      ]),
+    ]),
+    h("div", { style: { fontSize: "12px", color: C.mute } }, "← → step · space play/pause"),
+  ]);
+
+  /* ---- graph picker ---- */
+  const pickerBtns = Object.entries(CURATED).map(([k, g]) =>
+    h("button", { class: "btn" + (state.graphKey === k ? " active" : ""),
+      onclick: () => { state.graphKey = k; rebuildGraph(); render(); } }, g.name));
+  pickerBtns.push(h("button", { class: "btn" + (state.graphKey === "random" ? " active" : ""),
+    onclick: () => { state.graphKey = "random"; rebuildGraph(); render(); } }, "Random"));
+
+  const randControls = state.graphKey === "random" ? h("div", { class: "row",
+    style: { marginLeft: "6px", paddingLeft: "10px", borderLeft: "1px solid " + C.line, gap: "12px" } }, [
+    h("label", { class: "row", style: { gap: "6px", fontSize: "12px", color: C.mute } }, [
+      "seed",
+      h("input", { type: "number", value: String(state.seed),
+        onchange: (e) => { state.seed = parseInt(e.target.value || "0", 10); rebuildGraph(); render(); } }),
+    ]),
+    h("label", { class: "row", style: { gap: "6px", fontSize: "12px", color: C.mute } }, [
+      "nodes",
+      h("input", { type: "range", min: "4", max: "14", value: String(state.randCfg.nodes), style: { width: "84px" },
+        oninput: (e) => { state.randCfg = { ...state.randCfg, nodes: +e.target.value }; rebuildGraph(); render(); } }),
+      h("span", { class: "mono", style: { color: C.code, width: "18px" } }, String(state.randCfg.nodes)),
+    ]),
+    h("label", { class: "row", style: { gap: "6px", fontSize: "12px", color: C.mute } }, [
+      "components",
+      h("input", { type: "range", min: "1", max: String(Math.min(6, state.randCfg.nodes)),
+        value: String(Math.min(state.randCfg.sccs, state.randCfg.nodes)), style: { width: "84px" },
+        oninput: (e) => { state.randCfg = { ...state.randCfg, sccs: +e.target.value }; rebuildGraph(); render(); } }),
+      h("span", { class: "mono", style: { color: C.code, width: "18px" } }, String(Math.min(state.randCfg.sccs, state.randCfg.nodes))),
+    ]),
+    h("button", { class: "btn", onclick: () => { state.seed = Math.floor(Math.random() * 100000); rebuildGraph(); render(); } }, "New graph"),
+  ]) : null;
+
+  const picker = h("div", { class: "panel row", style: { padding: "10px" } }, [
+    ...pickerBtns, randControls,
+    h("button", { class: "btn", style: { marginLeft: "auto", color: C.mute },
+      onclick: () => { state.layoutSeed += 1; computePositions(); render(); } }, "Redraw layout"),
+  ]);
+
+  const noteEl = graph.note ? h("div", {
+    style: { fontSize: "13px", color: C.mute, background: C.panel, borderLeft: "2px solid " + C.line,
+      padding: "8px 12px", borderRadius: "0 6px 6px 0" } }, graph.note) : null;
+
+  /* ---- graph svg ---- */
+  const edgeEls = graph.edges.map(([a, b], i) => {
+    if (a === b) return null;
+    const bow = reverseSet.has(`${a}-${b}`) ? 26 : 0;
+    const g = edgePath(positions[a], positions[b], bow);
+    const isActive = activeEdge && activeEdge[0] === a && activeEdge[1] === b;
+    const skipped = isActive && st.kind === "skip";
+    const done = st.sccRoot[a] !== null && st.sccRoot[b] !== null && st.sccRoot[a] === st.sccRoot[b];
+    let stroke = C.edge, w = 2, op = 1;
+    if (done) { const ci = sccIndexOf(a); stroke = ci >= 0 ? SCC_COLORS[ci % SCC_COLORS.length] : "#475569"; op = 0.55; }
+    if (isActive) { stroke = skipped ? C.coral : C.amber; w = 3; op = 1; }
+    return S("g", { opacity: String(op) }, [
+      S("path", { d: g.d, fill: "none", stroke: stroke, "stroke-width": String(w),
+        "stroke-dasharray": skipped ? "5 4" : null }),
+      S("polygon", { points: "0,-8 18,0 0,8", fill: stroke,
+        transform: `translate(${g.tip.x},${g.tip.y}) rotate(${g.ang})` }),
+    ]);
+  });
+
+  const nodeEls = positions.map((p, v) => {
+    const ci = sccIndexOf(v);
+    const color = ci >= 0 ? SCC_COLORS[ci % SCC_COLORS.length] : null;
+    const visited = st.number[v] !== null;
+    const cur = activeNode === v;
+    let fill = C.panel, stroke = C.node, sw = 1.6;
+    if (visited) { fill = C.visitFill; stroke = C.blue; }
+    if (color) { fill = color + "26"; stroke = color; sw = 2; }
+    if (cur) { stroke = C.amber; sw = 3.4; }
+    const isRootNode = st.sccRoot[v] === v;
+    return S("g", {}, [
+      (onStack(v) && !color) ? S("circle", { cx: p.x, cy: p.y, r: R + 5, fill: "none", stroke: C.blue, "stroke-width": "1", opacity: "0.35" }) : null,
+      S("circle", { cx: p.x, cy: p.y, r: R, fill: fill, stroke: stroke, "stroke-width": String(sw) }),
+      S("text", { x: p.x, y: p.y + 5, "text-anchor": "middle", class: "mono", "font-size": "15", "font-weight": "700",
+        fill: color || (visited ? C.ink : C.mute) }, LABELS[v]),
+      visited ? S("text", { x: p.x, y: p.y + R + 15, "text-anchor": "middle", class: "mono", "font-size": "11.5", fill: "#94A3B8" },
+        `${st.number[v]}/${st.low[v]}`) : null,
+      isRootNode ? S("text", { x: p.x + R - 2, y: p.y - R + 4, "text-anchor": "middle", "font-size": "12", fill: color || C.ink }, "★") : null,
+    ]);
+  });
+
+  const legendSpan = (kids) => h("span", {}, kids);
+  const graphPanel = h("div", { class: "panel", style: { padding: "8px" } }, [
+    h("div", { class: "svgwrap" }, [
+      S("svg", { viewBox: `0 0 ${VW + 40} ${VH + 80}`, class: "graph" }, [...edgeEls, ...nodeEls]),
+    ]),
+    h("div", { class: "row", style: { padding: "2px 8px 4px", fontSize: "12px", color: C.mute, columnGap: "16px", rowGap: "4px" } }, [
+      legendSpan([h("span", { class: "mono", style: { color: C.code } }, "num/low"), " under each node"]),
+      legendSpan([h("span", { style: { color: C.blue } }, "blue ring"), " = on the stack"]),
+      legendSpan([h("span", { style: { color: C.amber } }, "amber"), " = current node/edge"]),
+      legendSpan([h("span", { style: { color: C.coral } }, "dashed red"), " = edge ignored (finished SCC)"]),
+      legendSpan("★ = SCC root"),
+    ]),
+  ]);
+
+  /* ---- controls ---- */
+  const controls = h("div", { class: "panel col", style: { padding: "12px" } }, [
+    h("div", { class: "row" }, [
+      h("button", { class: "btn", onclick: () => { state.step = 0; state.playing = false; state.prompt = null; render(); } }, "↺ Restart"),
+      h("button", { class: "btn", disabled: state.step === 0 ? "disabled" : null,
+        onclick: () => { state.prompt = null; state.step = Math.max(0, state.step - 1); render(); } }, "← Back"),
+      h("button", { class: "btn go", disabled: atEnd ? "disabled" : null,
+        onclick: () => { state.playing = !state.playing; render(); } }, state.playing ? "Pause" : "Play"),
+      h("button", { class: "btn", disabled: atEnd ? "disabled" : null, onclick: () => tryAdvance() }, "Step →"),
+      h("button", { class: "btn", disabled: atEnd ? "disabled" : null,
+        onclick: () => { state.playing = false; state.prompt = null; state.step = sim.steps.length - 1; render(); } }, "End ⇥"),
+      h("label", { class: "row", style: { gap: "6px", fontSize: "12px", color: C.mute, marginLeft: "6px" } }, [
+        "speed",
+        h("input", { type: "range", min: "120", max: "1400", step: "20", value: String(1520 - state.speed), style: { width: "96px" },
+          oninput: (e) => { state.speed = 1520 - (+e.target.value); } }),
+      ]),
+      h("div", { class: "mono", style: { marginLeft: "auto", fontSize: "12px", color: C.mute } }, `step ${state.step + 1} / ${sim.steps.length}`),
+    ]),
+    h("input", { type: "range", min: "0", max: String(sim.steps.length - 1), value: String(state.step), style: { width: "100%" },
+      oninput: (e) => { state.playing = false; state.prompt = null; state.step = +e.target.value; render(); } }),
+    h("div", { class: "row", style: { paddingTop: "8px", borderTop: "1px solid " + C.line, gap: "16px" } }, [
+      h("button", { class: "btn" + (state.predict ? " on" : ""),
+        onclick: () => { state.predict = !state.predict; state.prompt = null; render(); } }, (state.predict ? "◉ " : "○ ") + "Predict mode"),
+      (state.predict && state.score.total > 0)
+        ? h("span", { class: "mono", style: { fontSize: "12px", color: C.mute } }, `${state.score.right}/${state.score.total} root tests called correctly`)
+        : null,
+      h("label", { class: "row", style: { gap: "8px", fontSize: "12px", color: C.mute, marginLeft: "auto", cursor: "pointer" } }, [
+        h("input", { type: "checkbox", checked: state.guardOn ? "checked" : null,
+          onchange: (e) => { state.guardOn = e.target.checked; rebuildGraph(); render(); } }),
+        h("span", { class: "mono" }, "if other.scc_root is not None: continue"),
+      ]),
+    ]),
+    (!state.guardOn) ? h("div", {
+      style: { fontSize: "12px", borderRadius: "6px", padding: "8px", color: "#F5C77A",
+        background: "rgba(240,167,60,0.12)", border: "1px solid #5A4620", display: "flex", gap: "8px" } }, [
+      h("span", { style: { flexShrink: 0 } }, "⚠"),
+      h("span", {}, "Guard removed. Edges into already-finished components now feed their low values back in." +
+        (sim.guardSaves > 0
+          ? " This graph has such an edge, so the guard's absence corrupts at least one low value - sometimes enough to make a root test fail that should have passed."
+          : " This graph happens to have no edge that exposes the bug. Try the Guard breaker graph.")),
+    ]) : null,
+  ]);
+
+  /* ---- narration ---- */
+  let narrationInner;
+  if (state.prompt && !state.prompt.answered) {
+    narrationInner = h("div", { class: "col", style: { gap: "8px" } }, [
+      h("div", { style: { fontSize: "14px", color: C.ink } },
+        `${LABELS[sim.steps[state.prompt.idx].node]} has finished scanning its out-edges. Does it pass the root test, is low equal to number?`),
+      h("div", { class: "row" }, [
+        h("button", { class: "btn on", onclick: () => answerPredict(true) }, "Yes, it roots an SCC"),
+        h("button", { class: "btn", onclick: () => answerPredict(false) }, "No, keep returning"),
+      ]),
+    ]);
+  } else {
+    const mark = (state.prompt && state.prompt.answered)
+      ? h("span", { style: { color: state.prompt.correct ? C.green : C.coral, flexShrink: 0, fontWeight: 700 } }, state.prompt.correct ? "✓" : "✗")
+      : null;
+    narrationInner = h("div", { style: { display: "flex", gap: "8px", alignItems: "flex-start" } }, [
+      mark, h("p", { style: { fontSize: "14px", color: C.code, margin: 0, lineHeight: 1.55 } }, st.msg),
+    ]);
+  }
+  const narration = h("div", { class: "panel", style: { padding: "12px", minHeight: "72px" } }, narrationInner);
+
+  const leftCol = h("div", { class: "col" }, [graphPanel, controls, narration]);
+
+  /* ---- pseudocode ---- */
+  const codePanel = h("div", { class: "panel", style: { padding: "12px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "Pseudocode"),
+    h("div", { class: "mono", style: { fontSize: "11.5px", lineHeight: 1.7 } },
+      LINES.map((l) => {
+        const hot = st.line === l.id;
+        const dead = !state.guardOn && l.id === "guard";
+        return h("div", {
+          style: { padding: "1px 6px", borderRadius: "4px", paddingLeft: (6 + l.indent * 14) + "px",
+            color: hot ? C.amber : dead ? "#4A5568" : C.mute,
+            textDecoration: dead ? "line-through" : "none",
+            background: hot ? "rgba(240,167,60,0.16)" : "transparent" },
+        }, l.text);
+      })),
+  ]);
+
+  /* ---- stacks ---- */
+  const stackChips = st.stack.length === 0
+    ? [h("span", { style: { color: "#5A6785", fontSize: "13px" } }, "empty")]
+    : st.stack.map((v, i) => h("span", { class: "mono", style: {
+        padding: "3px 8px", borderRadius: "4px", fontSize: "13px", border: "1px solid",
+        ...(i === st.stack.length - 1
+          ? { background: "rgba(91,141,239,0.18)", borderColor: C.blue, color: "#BEE0FF" }
+          : { background: "#1C2942", borderColor: C.line, color: "#CBD5E1" }) } }, LABELS[v]));
+
+  const callChips = st.callStack.length === 0
+    ? [h("span", { style: { color: "#5A6785", fontSize: "13px" } }, "top level")]
+    : st.callStack.map((f) => h("span", { class: "mono chip", style: { fontSize: "12px", color: C.mute } }, `visit(${LABELS[f.node]})`));
+
+  const stacksPanel = h("div", { class: "panel", style: { padding: "12px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, [
+      "Stack ", h("span", { style: { textTransform: "none", letterSpacing: 0, color: "#5A6785" } }, "(top on the right)"),
+    ]),
+    h("div", { class: "row", style: { gap: "6px", minHeight: "30px" } }, stackChips),
+    h("div", { class: "lbl", style: { marginTop: "12px", marginBottom: "6px" } }, "Call stack"),
+    h("div", { class: "row", style: { gap: "6px" } }, callChips),
+  ]);
+
+  /* ---- components ---- */
+  const compPanel = h("div", { class: "panel", style: { padding: "12px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "Components, in the order found"),
+    st.sccs.length === 0 ? h("span", { style: { color: "#5A6785", fontSize: "13px" } }, "none yet") : null,
+    h("div", { class: "col", style: { gap: "6px" } }, st.sccs.map((c, i) =>
+      h("div", { class: "row", style: { gap: "8px" } }, [
+        h("span", { class: "mono", style: { fontSize: "12px", color: C.mute, width: "16px" } }, String(i + 1)),
+        h("span", { class: "mono", style: { padding: "2px 8px", borderRadius: "4px", fontSize: "13px", border: "1px solid",
+          color: SCC_COLORS[i % SCC_COLORS.length], borderColor: SCC_COLORS[i % SCC_COLORS.length] + "80",
+          background: SCC_COLORS[i % SCC_COLORS.length] + "18" } }, c.map((v) => LABELS[v]).join(" ")),
+      ]))),
+    atEnd ? h("div", {
+      style: { marginTop: "12px", fontSize: "12px", borderRadius: "6px", padding: "8px", display: "flex", gap: "8px", alignItems: "flex-start",
+        ...(correctOutput
+          ? { color: "#9FE7CE", background: "rgba(45,212,160,0.10)", border: "1px solid #1F5B49" }
+          : { color: "#F6B4B4", background: "rgba(255,107,107,0.10)", border: "1px solid #6E2B2B" }) } }, [
+      h("span", { style: { flexShrink: 0, fontWeight: 700 } }, correctOutput ? "✓" : "✗"),
+      h("span", {}, correctOutput
+        ? "Matches the true SCC partition. Discovery order is reverse topological order of the condensation graph."
+        : `Wrong. The true partition is ${truth.map((c) => "{" + c.map((v) => LABELS[v]).join(",") + "}").join(" ")}.`),
+    ]) : null,
+  ]);
+
+  /* ---- table ---- */
+  const tablePanel = h("div", { class: "panel", style: { padding: "12px" } }, [
+    h("button", { class: "lbl", style: { marginBottom: "8px", background: "none", border: "none", cursor: "pointer", padding: 0 },
+      onclick: () => { state.showTable = !state.showTable; render(); } }, "Node state " + (state.showTable ? "▾" : "▸")),
+    state.showTable ? h("table", {}, [
+      h("thead", {}, h("tr", {}, [
+        h("th", {}, "node"), h("th", {}, "number"), h("th", {}, "low"), h("th", {}, "scc_root"),
+      ])),
+      h("tbody", {}, Array.from({ length: graph.n }, (_, v) => {
+        const ci = sccIndexOf(v);
+        const color = ci >= 0 ? SCC_COLORS[ci % SCC_COLORS.length] : undefined;
+        const lowEqNum = st.low[v] !== null && st.low[v] === st.number[v];
+        return h("tr", { style: activeNode === v ? { background: "rgba(240,167,60,0.10)" } : undefined }, [
+          h("td", { style: { color: color || C.ink } }, LABELS[v]),
+          h("td", { style: { textAlign: "right", color: C.mute } }, st.number[v] === null ? "·" : String(st.number[v])),
+          h("td", { style: { textAlign: "right", color: lowEqNum ? C.green : C.mute } }, st.low[v] === null ? "·" : String(st.low[v])),
+          h("td", { style: { textAlign: "right", color: color || "#5A6785" } }, st.sccRoot[v] !== null ? LABELS[st.sccRoot[v]] : "·"),
+        ]);
+      })),
+    ]) : null,
+  ]);
+
+  const rightCol = h("div", { class: "col" }, [codePanel, stacksPanel, compPanel, tablePanel]);
+
+  /* ---- footnote ---- */
+  const footnote = h("div", { class: "panel", style: { padding: "12px", fontSize: "12px", color: C.mute, display: "flex", flexDirection: "column", gap: "6px" } }, [
+    h("p", { style: { margin: 0 } }, [
+      h("span", { style: { color: C.code } }, "Why the root test works: "),
+      "the first node stepped into a sink component has the smallest number in that component, every other node there can reach it, and DFS cannot leave the component before finishing it. So that node's low collapses back to its own number, and the component is exactly the tail of the stack.",
+    ]),
+    h("p", { style: { margin: 0 } }, [
+      h("span", { style: { color: C.code } }, "What low is not: "),
+      "it is not \"earliest node reachable.\" In the lecture graph, E reaches C (number 2) but ends with low 3. The traversal only propagates one step past the current path, which is weaker than reachability but still enough for the root test.",
+    ]),
+  ]);
+
+  /* ---- assemble ---- */
+  const wrap = h("div", { class: "wrap" }, [
+    header, picker, noteEl,
+    h("div", { class: "grid3" }, [leftCol, rightCol]),
+    footnote,
+  ]);
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(wrap);
+}
+
+/* ─────────────────────────── keyboard + init ─────────────────────────── */
+window.addEventListener("keydown", (e) => {
+  if (e.target && e.target.tagName === "INPUT") return;
+  if (e.key === "ArrowRight") { e.preventDefault(); tryAdvance(); }
+  if (e.key === "ArrowLeft") { e.preventDefault(); state.prompt = null; state.step = Math.max(0, state.step - 1); render(); }
+  if (e.key === " ") { e.preventDefault(); if (state.step < sim.steps.length - 1) { state.playing = !state.playing; render(); } }
+});
+
+rebuildGraph();
+render();
+</script>
+</body>
+</html>

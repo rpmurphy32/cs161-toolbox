@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quickselect · CS161</title>
+<style>
+  :root{
+    --bg:#0B1120; --panel:#151E31; --ink:#E6EDF7; --mute:#8194B0; --line:#2A3752;
+    --blue:#5B8DEF; --green:#2DD4A0; --amber:#F0A73C; --coral:#FF6B6B;
+    --fill:#10192B; --onDark:#0B1120; --code:#A7B6CE;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg)}
+  body{color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 56px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;color:var(--mute);margin:6px 0 0}
+  .legend{font-size:12px;color:var(--mute);margin:10px 0 0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;border:1px solid var(--line);
+    background:transparent;color:var(--ink);cursor:pointer;transition:opacity .15s,border-color .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  .kbtn{padding:4px 9px;font-size:13px}
+  input[type=range]{accent-color:var(--blue)}
+  .cells{display:flex;gap:4px}
+  .cell{flex:1;height:48px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid #2A3752;
+    font-size:15px;font-weight:600;min-width:0}
+  .ptrs{display:flex;gap:4px;height:18px;margin-top:4px}
+  .ptr{flex:1;text-align:center;font-size:12px;font-weight:600;color:var(--green)}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px;flex:1 1 140px}
+  .stat .k{font-size:13px;color:var(--mute)}
+  .stat .v{font-size:24px;font-weight:600}
+  @media (max-width:560px){.wrap{padding:24px 14px 40px}.cell{height:42px;font-size:13px}}
+  @media (prefers-reduced-motion:reduce){.btn{transition:none}}
+</style>
+</head>
+<body>
+<div id="root" class="wrap"></div>
+<script>
+"use strict";
+
+/* ---- palette ---- */
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B",
+  fill:"#10192B", dimTxt:"#4A5A78", onDark:"#0B1120", code:"#A7B6CE",
+};
+
+/* ---- data ---- */
+const N = 8;
+const newArray = () => Array.from({ length: N }, () => Math.floor(Math.random() * 90) + 10);
+
+/* ---- step generator: quickselect (Lomuto partition, recurse one side) ---- */
+function genSteps(a, k) {
+  const s = [], arr = a.slice();
+  const t = k - 1;                    // 0-based target index
+  let comps = 0, swaps = 0, result = null;
+  const snap = o => s.push({ arr: arr.slice(), comps, swaps, t, result, ...o });
+
+  let lo = 0, hi = arr.length - 1;
+  snap({ kind: "intro", lo, hi, msg: `Looking for the ${k}-th smallest value (k = ${k}), which belongs at index ${t}. Search range is [${lo}..${hi}].` });
+
+  while (true) {
+    if (lo === hi) {
+      result = arr[lo];
+      snap({ kind: "single", lo, hi, found: lo, result, msg: `The range is a single cell. The ${k}-th smallest value is ${result}.` });
+      break;
+    }
+    const r = lo + Math.floor(Math.random() * (hi - lo + 1)); // uniform random index in [lo..hi] (hi inclusive)
+    if (r !== hi) { [arr[r], arr[hi]] = [arr[hi], arr[r]]; swaps++; } // move pivot to hi, where Lomuto expects it
+    const p = arr[hi];
+    snap({ kind: "partition", lo, hi, piv: hi, i: lo - 1, msg: `Partition [${lo}..${hi}] around random pivot ${p}.` });
+    let i = lo - 1;
+    for (let j = lo; j < hi; j++) {
+      comps++;
+      snap({ kind: "partition", lo, hi, piv: hi, i, j, cmp: true, msg: `Compare arr[${j}]=${arr[j]} with pivot ${p}.` });
+      if (arr[j] < p) {
+        i++;
+        if (i !== j) {
+          [arr[i], arr[j]] = [arr[j], arr[i]]; swaps++;
+          snap({ kind: "partition", lo, hi, piv: hi, i, j, msg: `${arr[i]} < ${p}: grow the “< pivot” zone, swap arr[${i}] ↔ arr[${j}].` });
+        } else {
+          snap({ kind: "partition", lo, hi, piv: hi, i, j, msg: `${arr[j]} < ${p}: already at the boundary, extend the “< pivot” zone (i = ${i}).` });
+        }
+      }
+    }
+    const pos = i + 1;
+    [arr[pos], arr[hi]] = [arr[hi], arr[pos]]; swaps++;
+    snap({ kind: "partition", lo, hi, placed: pos, msg: `Place the pivot at index ${pos}. Value ${arr[pos]} is now in its final sorted position.` });
+
+    if (pos === t) {
+      result = arr[pos];
+      snap({ kind: "found", lo, hi, found: pos, result, msg: `The pivot landed exactly on target index ${t}. The ${k}-th smallest value is ${result}.` });
+      break;
+    } else if (t < pos) {
+      hi = pos - 1;
+      snap({ kind: "left", lo, hi, msg: `Target index ${t} < ${pos}, so the answer is in the left part. Recurse into [${lo}..${hi}] and discard the rest.` });
+    } else {
+      lo = pos + 1;
+      snap({ kind: "right", lo, hi, msg: `Target index ${t} > ${pos}, so the answer is in the right part. Recurse into [${lo}..${hi}] and discard the rest.` });
+    }
+  }
+  return s;
+}
+
+/* ---- pseudocode (original plain-English paraphrase, synced to the current step) ---- */
+const CODE = [
+  "the k-th smallest value sits at index k−1 of sorted order - call that the target",
+  "while the current range covers more than one cell:",
+  "    partition it around a random pivot - the pivot lands in its final sorted spot",
+  "    if the pivot landed exactly on the target index, its value is the answer",
+  "    if the target index lies left of the pivot, keep only the left piece",
+  "    otherwise keep only the right piece - the discarded side is never touched again",
+  "a range narrowed to a single cell must hold the answer",
+];
+const HILITE = { intro: [0, 1], partition: [2], found: [3], left: [4], right: [5], single: [6] };
+
+/* ---- tiny dom helper ---- */
+function h(tag, props, kids) {
+  const e = document.createElement(tag);
+  props = props || {};
+  for (const k in props) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.className = v;
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+
+/* ---- state ---- */
+const state = { base: newArray(), k: 4, idx: 0, playing: false, speed: 4 };
+let steps = genSteps(state.base, state.k);
+let playTimer = null;
+
+function rebuild() { steps = genSteps(state.base, state.k); state.idx = 0; state.playing = false; }
+
+function render() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  if (state.idx > steps.length - 1) state.idx = steps.length - 1;
+  if (state.idx < 0) state.idx = 0;
+  const st = steps[state.idx];
+  const inR = x => st.lo !== undefined && x >= st.lo && x <= st.hi;
+
+  if (state.playing) {
+    if (state.idx >= steps.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.idx += 1; render(); }, 1000 - state.speed * 88);
+  }
+
+  /* array cells */
+  const cells = st.arr.map((v, x) => {
+    let bg = "#1C2942", txt = C.code;
+    if (st.result !== null && x === st.t) { bg = C.green; txt = C.onDark; }
+    else if (st.lo !== undefined && !inR(x)) { bg = C.fill; txt = C.dimTxt; }
+    else if (st.piv === x) { bg = C.coral; txt = C.onDark; }
+    else if (st.cmp && st.j === x) { bg = C.amber; txt = C.onDark; }
+    else if (st.i !== undefined && x <= st.i && x >= st.lo) { bg = C.blue; txt = C.onDark; }
+    const style = { background: bg, color: txt };
+    if (st.result === null && x === st.t) style.boxShadow = "inset 0 0 0 2px " + C.green;
+    return h("div", { class: "cell mono", style }, String(v));
+  });
+
+  const ptrs = st.arr.map((_, x) => {
+    let lbl = "";
+    if (st.i === x && st.i >= (st.lo ?? 0)) lbl = "↑ i";
+    if (st.j === x) lbl += (lbl ? " " : "") + "↑ j";
+    return h("div", { class: "ptr mono" }, lbl);
+  });
+
+  /* controls */
+  const btn = (label, onclick, extra) => h("button", Object.assign({ class: "btn", onclick }, extra || {}), label);
+  const atEnd = state.idx >= steps.length - 1;
+
+  const kRow = h("div", { class: "row", style: { marginTop: "14px" } }, [
+    h("span", { class: "sub", style: { marginRight: "2px" } }, "Find k ="),
+    ...Array.from({ length: N }, (_, x) => x + 1).map(kk =>
+      h("button", {
+        class: "btn kbtn",
+        onclick: () => { state.k = kk; rebuild(); render(); },
+        style: kk === state.k ? { borderColor: C.blue, background: C.blue, color: C.onDark } : {},
+      }, String(kk))),
+    h("span", { class: "sub" }, "th smallest"),
+  ]);
+
+  const controls = h("div", { class: "row", style: { marginTop: "12px" } }, [
+    btn(state.playing ? "Pause" : "Play", () => {
+      if (state.playing) { state.playing = false; render(); return; }
+      if (state.idx >= steps.length - 1) state.idx = 0;
+      state.playing = true; render();
+    }, { style: { borderColor: C.blue, background: C.blue, color: C.onDark } }),
+    btn("Step", () => { state.playing = false; if (state.idx < steps.length - 1) state.idx += 1; render(); },
+      { disabled: atEnd ? "disabled" : null }),
+    btn("Back", () => { state.playing = false; if (state.idx > 0) state.idx -= 1; render(); },
+      { disabled: state.idx === 0 ? "disabled" : null }),
+    btn("Reset", () => { state.playing = false; state.idx = 0; render(); }),
+    btn("New array", () => { state.base = newArray(); rebuild(); render(); }),
+    h("label", { class: "sub", style: { marginLeft: "6px" } }, "Speed"),
+    h("input", {
+      type: "range", min: "1", max: "10", value: String(state.speed),
+      style: { width: "120px" },
+      oninput: (e) => { state.speed = +e.target.value; },
+    }),
+    h("span", { class: "sub", style: { marginLeft: "auto" } }, "step " + (state.idx + 1) + " / " + steps.length),
+  ]);
+
+  /* stat tiles */
+  const stat = (k, v) => h("div", { class: "stat" }, [h("div", { class: "k" }, k), h("div", { class: "v mono" }, String(v))]);
+
+  /* pseudocode card, synced to the current step */
+  const hl = HILITE[st.kind] || [];
+  const codeCard = h("div", { class: "panel", style: { padding: "12px", marginTop: "12px" } }, [
+    h("div", { class: "sub", style: { margin: "0 0 8px", fontSize: "11px", textTransform: "uppercase", letterSpacing: ".06em" } },
+      "The algorithm in words"),
+    h("div", { class: "mono", style: { fontSize: "12.5px", lineHeight: "1.65", overflowX: "auto" } },
+      CODE.map((l, x) => {
+        const on = hl.includes(x);
+        return h("div", { style: {
+          whiteSpace: "pre", padding: "2px 8px",
+          borderLeft: on ? "3px solid " + C.amber : "3px solid transparent",
+          background: on ? "rgba(240,167,60,0.14)" : "transparent",
+          color: on ? C.ink : C.code, fontWeight: on ? 600 : 400,
+        } }, l);
+      })),
+  ]);
+
+  const view = h("div", {}, [
+    h("h1", {}, "Quickselect"),
+    h("p", { class: "sub" }, "Find the k-th smallest value in expected O(n) time, without fully sorting the array. This page partitions Lomuto-style - an alternative scheme; the lecture's select uses the two-pointer partition shown on the Sedgewick page. The random pivot choice matches lecture."),
+    h("p", { class: "legend" }, "coral = pivot · amber = comparing · blue = “< pivot” zone · outlined = target index k−1 · green = the answer"),
+
+    h("div", { class: "panel", style: { padding: "12px", marginTop: "16px" } }, [
+      h("div", { class: "cells" }, cells),
+      h("div", { class: "ptrs" }, ptrs),
+    ]),
+
+    h("div", { class: "panel", style: { padding: "10px 12px", marginTop: "12px" } }, [
+      h("div", { class: "sub", style: { marginBottom: "2px" } }, "How it works"),
+      h("div", { style: { fontSize: "13px", color: C.mute } },
+        "Partition like quicksort, but recurse into only the side that contains target index k−1 (what the course calls rank k−1: the element larger than exactly k−1 others). Expected O(n), worst case O(n²)."),
+    ]),
+
+    h("div", { class: "mono", style: { fontSize: "14px", color: C.mute, minHeight: "44px", marginTop: "12px" } }, st.msg),
+
+    codeCard,
+
+    kRow,
+    controls,
+
+    h("div", { class: "row", style: { marginTop: "16px", alignItems: "stretch" } }, [
+      stat("Comparisons", st.comps),
+      stat("Target: k-th smallest", state.k),
+      stat("Result", st.result === null ? "searching…" : st.result),
+    ]),
+  ]);
+
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(view);
+}
+
+render();
+</script>
+</body>
+</html>

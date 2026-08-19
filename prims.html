@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prim's Algorithm · CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0B1120}
+  .page{min-height:100vh;padding:16px;background:#0B1120;color:#E6EDF7;
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1152px;margin:0 auto}
+  .header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:16px}
+  h1{font-size:24px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;margin:4px 0 0;color:#8194B0}
+  select{font-size:13px;border-radius:6px;padding:6px 8px;border:1px solid #2A3752;background:#151E31;color:#E6EDF7}
+  .card{background:#151E31;border:1px solid #2A3752;border-radius:8px;padding:12px}
+  .main{display:flex;flex-direction:column;gap:16px}
+  .left{width:100%}
+  .right{width:100%;display:flex;flex-direction:column;gap:16px}
+  @media(min-width:1024px){.main{flex-direction:row}.left{width:60%}.right{width:40%}.page{padding:24px}}
+  .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;
+    border:1px solid #2A3752;background:transparent;color:#E6EDF7;cursor:pointer;
+    transition:opacity .15s,background .15s,border-color .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible,select:focus-visible{outline:2px solid #5B8DEF;outline-offset:2px}
+  svg.graph{width:100%;height:auto;max-height:430px;display:block}
+  pre{margin:0;font-size:12px;line-height:1.55;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#8194B0}
+  @media (prefers-reduced-motion: reduce){.btn{transition:none}}
+</style>
+</head>
+<body>
+<div id="root" class="page"></div>
+
+<script>
+"use strict";
+/* ---------------------------------------------------------------- palette */
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0",
+  line:"#2A3752", reached:"#5B8DEF", outside:"#4A5A78", mst:"#2DD4A0",
+  cand:"#F0A73C", cur:"#FF6B6B", dead:"#3A4763", onDark:"#0B1120",
+  hilite:"#1E2E27", code:"#A7B6CE",
+};
+
+/* ------------------------------------------------------------ curated set */
+const CURATED = {
+  lecture: {
+    label: "Lecture graph (Wed 8/5)",
+    blurb: "The graph from the board. MST weight 10.",
+    nodes: { A:[95,195], B:[315,65], C:[235,200], D:[150,335], E:[420,240] },
+    edges: [["A","B",3],["A","C",2],["A","D",1],["B","C",7],["B","D",6],["B","E",4],["C","D",8],["D","E",5]],
+    start: "D",
+  },
+  exam: {
+    label: "Negative weights, small",
+    blurb: "A small graph with negative weights. From C the MST is CB, CD, DA (weight −4).",
+    nodes: { A:[95,205], B:[300,75], C:[300,205], D:[300,335] },
+    edges: [["A","B",5],["A","C",3],["A","D",1],["B","C",-4],["C","D",-1]],
+    start: "C",
+  },
+};
+
+/* ------------------------------------------------------------------- rng */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const NAMES = "ABCDEFGH".split("");
+
+/* -------------------------------------------------------------- core prim */
+function buildAdj(g){
+  const adj = {};
+  Object.keys(g.nodes).forEach((n) => (adj[n] = []));
+  g.edges.forEach(([u,v,w], id) => {
+    adj[u].push({ src:u, dst:v, w, id });
+    adj[v].push({ src:v, dst:u, w, id });
+  });
+  return adj;
+}
+
+function buildTrace(g, start){
+  const adj = buildAdj(g);
+  const n = Object.keys(g.nodes).length;
+  const steps = [];
+  let reached = new Set([start]), heap = [], mst = [], dead = [], seq = 0;
+
+  const pushOut = (v) => adj[v].forEach((e) => heap.push({ ...e, seq: seq++ }));
+  const cmp = (a, b) => a.w - b.w || a.seq - b.seq;
+  const snap = (x) => ({ reached:[...reached], heap:[...heap].sort(cmp), mst:[...mst], dead:[...dead], ...x });
+
+  pushOut(start);
+  steps.push(snap({ phase:"init", current:null,
+    note:`Cut = {${start}} vs everything else. Every edge leaving ${start} is a crossing edge, so all of them go into the heap.` }));
+
+  let guard = 0;
+  while (reached.size !== n && heap.length > 0 && guard++ < 900){
+    heap.sort(cmp);
+    const edge = heap.shift();
+    steps.push(snap({ phase:"pop", current:edge,
+      note:`Pull the lightest edge from the heap: ${edge.src}→${edge.dst} (${edge.w}).` }));
+
+    if (reached.has(edge.dst)){
+      dead.push(edge);
+      steps.push(snap({ phase:"skip", current:edge,
+        note:`${edge.dst} is already inside the cut, so ${edge.src}→${edge.dst} stopped being a crossing edge. Lazy deletion: discard and loop again.` }));
+      continue;
+    }
+    mst.push(edge); reached.add(edge.dst); pushOut(edge.dst);
+    steps.push(snap({ phase:"accept", current:edge,
+      note:`${edge.src}→${edge.dst} is a lightest crossing edge of this cut - with distinct weights the cut lemma puts it in the MST; with ties it's guaranteed to be in some MST. ${edge.dst} moves inside; its edges get pushed.` }));
+  }
+  steps.push(snap({ phase:"done", current:null,
+    note:`reached holds all ${n} nodes, so the loop exits. ${mst.length} edges = n − 1. Total weight ${mst.reduce((s,e)=>s+e.w,0)}.` }));
+  return steps;
+}
+
+const mstOf = (g, s) => buildTrace(g, s).filter((x) => x.phase === "accept").map((x) => x.current);
+const skipsOf = (g, s) => buildTrace(g, s).filter((x) => x.phase === "skip").length;
+
+/* ------------------------------------------------------------- challenges */
+const CHALLENGES = {
+  distantSource: {
+    label: "The winner comes from an old node",
+    blurb: "At some step the accepted edge leaves a node that entered the cut two or more steps earlier, not the node you just added.",
+    watch: "Before each pop, list every crossing edge from every node inside the cut. Not just the newest one.",
+    density: 1.6, weights: "positive",
+  },
+  cheapRejected: {
+    label: "A very cheap edge never makes it",
+    blurb: "One of the two lightest edges in the whole graph gets discarded, because both its endpoints end up inside the cut first.",
+    watch: "Cheapness alone earns nothing. An edge only counts if it crosses the cut at the moment it is popped.",
+    density: 1.9, weights: "positive",
+  },
+  heavyRequired: {
+    label: "The heaviest edge is mandatory",
+    blurb: "The single most expensive edge in the graph is in the MST. It is the only way to reach some node.",
+    watch: "Minimum spanning tree, not cheap spanning tree. Connectivity comes first.",
+    density: 1.25, weights: "positive",
+  },
+  staleHeavy: {
+    label: "The heap fills with stale entries",
+    blurb: "Most pops hit the discard on line 6 and go nowhere. Shows why the bound is O(m log m) = O(m log n), not O(n log n).",
+    watch: "Count the pops against the accepts. Every undirected edge gets pushed twice, once from each end.",
+    density: 2.1, weights: "positive",
+  },
+  negatives: {
+    label: "Negative weights",
+    blurb: "Mixed signs, with negative edges in the tree. Prim does not care about sign, only about comparisons.",
+    watch: "−4 is lighter than −1, which is lighter than 3. Sort by value, not magnitude.",
+    density: 1.6, weights: "negative",
+  },
+  ties: {
+    label: "Tied weights, two valid answers",
+    blurb: "Duplicate weights, and two start nodes produce different MSTs of equal total weight. The case Bridge 0.1 asks you to prove.",
+    watch: "Compare your total against the answer key, not your edge list. Both are correct.",
+    density: 1.6, weights: "ties",
+  },
+};
+
+function makeGraph(rng, n, spec){
+  const names = NAMES.slice(0, n);
+  const nodes = {};
+  const cx = 258, cy = 198, rx = 172, ry = 142;
+  names.forEach((nm, i) => {
+    const t = -Math.PI / 2 + (2 * Math.PI * i) / n;
+    nodes[nm] = [Math.round(cx + rx * Math.cos(t)), Math.round(cy + ry * Math.sin(t))];
+  });
+
+  const seen = new Set(), pairs = [];
+  const key = (u, v) => (u < v ? u + v : v + u);
+  const order = [...names].sort(() => rng() - 0.5);
+  for (let i = 1; i < n; i++){
+    const u = order[i], v = order[Math.floor(rng() * i)];
+    seen.add(key(u, v)); pairs.push([u, v]);
+  }
+  const target = Math.min(Math.round(n * spec.density), (n * (n - 1)) / 2);
+  let tries = 0;
+  while (pairs.length < target && tries++ < 400){
+    const u = names[Math.floor(rng() * n)], v = names[Math.floor(rng() * n)];
+    if (u === v || seen.has(key(u, v))) continue;
+    seen.add(key(u, v)); pairs.push([u, v]);
+  }
+
+  const m = pairs.length;
+  let ws;
+  if (spec.weights === "ties"){
+    ws = Array.from({ length: m }, () => 1 + Math.floor(rng() * Math.max(3, Math.ceil(m / 2))));
+  } else {
+    const lo = spec.weights === "negative" ? -7 : 1;
+    const pool = [];
+    for (let v = lo; pool.length < m + 8; v++) pool.push(v);
+    for (let i = pool.length - 1; i > 0; i--){
+      const j = Math.floor(rng() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    ws = pool.slice(0, m);
+  }
+  return { nodes, edges: pairs.map(([u, v], i) => [u, v, ws[i]]) };
+}
+
+function passes(kind, g){
+  const names = Object.keys(g.nodes);
+  const sorted = [...g.edges].map((e, id) => ({ w: e[2], id })).sort((a, b) => a.w - b.w);
+
+  for (const s of names){
+    const acc = mstOf(g, s);
+    const ids = new Set(acc.map((e) => e.id));
+    const idx = { [s]: 0 };
+    acc.forEach((e, k) => (idx[e.dst] = k + 1));
+
+    if (kind === "distantSource"){
+      const hit = acc.some((e, k) => k >= 2 && k - idx[e.src] >= 2);
+      if (hit) return s;
+    }
+    if (kind === "cheapRejected"){
+      if (!ids.has(sorted[0].id) || !ids.has(sorted[1].id)) return s;
+    }
+    if (kind === "heavyRequired"){
+      if (ids.has(sorted[sorted.length - 1].id)) return s;
+    }
+    if (kind === "staleHeavy"){
+      if (skipsOf(g, s) >= Math.max(4, names.length)) return s;
+    }
+    if (kind === "negatives"){
+      const negs = g.edges.filter((e) => e[2] < 0).length;
+      const negInTree = acc.some((e) => e.w < 0), posInTree = acc.some((e) => e.w > 0);
+      if (negs >= 2 && negInTree && posInTree) return s;
+    }
+    if (kind === "ties"){
+      const dup = new Set(g.edges.map((e) => e[2])).size < g.edges.length;
+      if (!dup) continue;
+      for (const t of names){
+        if (t === s) continue;
+        const other = new Set(mstOf(g, t).map((e) => e.id));
+        if (other.size === ids.size && [...ids].some((x) => !other.has(x))) return s;
+      }
+    }
+  }
+  return null;
+}
+
+function generate(kind, n, seed){
+  const spec = CHALLENGES[kind];
+  let last = null;
+  for (let a = 0; a < 900; a++){
+    const rng = mulberry32(seed * 7919 + a);
+    const g = makeGraph(rng, n, spec);
+    last = g;
+    const s = passes(kind, g);
+    if (s) return { ...g, start: s, exact: true };
+  }
+  return { ...last, start: Object.keys(last.nodes)[0], exact: false };
+}
+
+/* ------------------------------------------------------------- pseudocode */
+const CODE = [
+  "grow one tree outward from any start node",
+  "reached = { start }     MST = { }",
+  "the heap holds every edge leaving a reached node",
+  "repeat until all n nodes are reached:",
+  "    pull the lightest edge from the heap",
+  "    if it leads into a node we already reached, discard it",
+  "    otherwise keep it: add the edge to MST, mark its endpoint reached,",
+  "    and push that endpoint's outgoing edges into the heap",
+];
+const HILITE = { init:[0,1,2], pop:[4], skip:[5], accept:[6,7], done:[3] };
+
+/* --------------------------------------------------------------- dom help */
+const SVGNS = "http://www.w3.org/2000/svg";
+function mk(ns, tag, props, kids){
+  const e = ns ? document.createElementNS(ns, tag) : document.createElement(tag);
+  props = props || {};
+  for (const k in props){
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.setAttribute("class", v);
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c){
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+const h = (tag, props, kids) => mk(null, tag, props, kids);
+const S = (tag, props, kids) => mk(SVGNS, tag, props, kids);
+
+/* --------------------------------------------------------------- render */
+const state = { source:"lecture", size:6, seed:4718, i:0, playing:false, reveal:true, start:CURATED.lecture.start };
+
+let graphCache = { key:null, g:null };
+function getGraph(){
+  if (!CHALLENGES[state.source]) return CURATED[state.source];
+  const key = state.source + "|" + state.size + "|" + state.seed;
+  if (graphCache.key === key) return graphCache.g;
+  const g = generate(state.source, state.size, state.seed);
+  graphCache = { key, g };
+  return g;
+}
+
+const strokeFor = (s) => ({ idle:C.line, cand:C.cand, mst:C.mst, cur:C.cur, dead:C.dead }[s]);
+const widthFor  = (s) => ({ idle:2, cand:3, mst:5, cur:5, dead:2 }[s]);
+
+function resetForGraph(){ const g = getGraph(); state.start = g.start; state.i = 0; state.playing = false; }
+
+let playTimer = null;
+
+function render(){
+  if (playTimer){ clearTimeout(playTimer); playTimer = null; }
+
+  const isChallenge = !!CHALLENGES[state.source];
+  const g = getGraph();
+  const nodeNames = Object.keys(g.nodes);
+  const start = nodeNames.includes(state.start) ? state.start : nodeNames[0];
+  const trace = buildTrace(g, start);
+  if (state.i > trace.length - 1) state.i = trace.length - 1;
+  if (state.i < 0) state.i = 0;
+  const step = trace[state.i];
+
+  if (state.playing){
+    if (state.i >= trace.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.i += 1; render(); }, 1000);
+  }
+
+  const edgeState = {};
+  g.edges.forEach((_, id) => (edgeState[id] = "idle"));
+  step.dead.forEach((e) => (edgeState[e.id] = "dead"));
+  step.heap.forEach((e) => { if (edgeState[e.id] !== "mst") edgeState[e.id] = "cand"; });
+  step.mst.forEach((e) => (edgeState[e.id] = "mst"));
+  if (step.current && (step.phase === "pop" || step.phase === "skip")) edgeState[step.current.id] = "cur";
+
+  const reachedSet = new Set(step.reached);
+  const mstWeight = step.mst.reduce((s, e) => s + e.w, 0);
+  const lines = HILITE[step.phase] || [];
+  const ch = CHALLENGES[state.source];
+
+  const btnStyle = (o) => Object.assign({}, o);
+
+  /* -------- header -------- */
+  const select = h("select", { onchange: (ev) => { state.source = ev.target.value; resetForGraph(); render(); } }, [
+    h("optgroup", { label: "From class" },
+      Object.entries(CURATED).map(([k, v]) => h("option", { value: k, selected: state.source === k ? "selected" : null }, v.label))),
+    h("optgroup", { label: "Generated challenges" },
+      Object.entries(CHALLENGES).map(([k, v]) => h("option", { value: k, selected: state.source === k ? "selected" : null }, v.label))),
+  ]);
+
+  const header = h("div", { class: "header" }, [
+    h("div", {}, [
+      h("h1", {}, "Prim's Algorithm"),
+      h("p", { class: "sub" }, "The heap-based variant from CS161, including the lazy deletion on line 6."),
+    ]),
+    select,
+  ]);
+
+  /* -------- challenge bar -------- */
+  let bar;
+  if (isChallenge){
+    const sizeBtns = [4,5,6,7].map((k) => h("button", {
+      class: "btn",
+      style: btnStyle({ borderColor: state.size === k ? C.reached : C.line,
+        background: state.size === k ? C.reached : "transparent",
+        color: state.size === k ? C.onDark : C.ink }),
+      onclick: () => { state.size = k; resetForGraph(); render(); },
+    }, String(k)));
+
+    bar = h("div", { class: "card", style: { marginBottom: "16px" } }, [
+      h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, [
+        h("div", { class: "row" }, [
+          h("button", { class: "btn", style: { borderColor: C.cand, color: C.cand },
+            onclick: () => { state.seed = Math.floor(Math.random() * 99999); resetForGraph(); render(); } }, "New graph"),
+          h("span", { class: "lbl" }, "nodes"),
+          ...sizeBtns,
+          h("span", { class: "mono", style: { fontSize: "12px", marginLeft: "auto", color: C.mute } },
+            "seed " + state.seed + (g.exact === false ? " · closest match" : "")),
+        ]),
+        h("p", { style: { fontSize: "13px", margin: 0 } }, ch.blurb),
+        h("p", { style: { fontSize: "12px", margin: 0, color: C.cand } }, "Watch for: " + ch.watch),
+      ]),
+    ]);
+  } else {
+    bar = h("div", { class: "card", style: { marginBottom: "16px" } },
+      h("p", { style: { fontSize: "13px", margin: 0 } }, CURATED[state.source].blurb));
+  }
+
+  /* -------- graph (left) -------- */
+  const startBtns = nodeNames.map((n) => h("button", {
+    class: "btn",
+    style: btnStyle({ borderColor: start === n ? C.reached : C.line,
+      background: start === n ? C.reached : "transparent",
+      color: start === n ? C.onDark : C.ink }),
+    onclick: () => { state.start = n; state.i = 0; state.playing = false; render(); },
+  }, n + (isChallenge && n === g.start ? " •" : "")));
+
+  const edgeEls = g.edges.map(([u, v, w], id) => {
+    const [x1, y1] = g.nodes[u], [x2, y2] = g.nodes[v];
+    const st = edgeState[id];
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
+    const k = id % 2 === 0 ? 16 : -16;
+    const ox = (-dy / len) * k, oy = (dx / len) * k;
+    return S("g", {}, [
+      S("line", { x1, y1, x2, y2, stroke: strokeFor(st), "stroke-width": widthFor(st),
+        "stroke-dasharray": st === "cur" ? "8 5" : st === "dead" ? "2 6" : "none", "stroke-linecap": "round" }),
+      S("rect", { x: mx + ox - 15, y: my + oy - 11, width: 30, height: 22, rx: 4,
+        fill: C.panel, stroke: strokeFor(st), "stroke-width": 1.5 }),
+      S("text", { x: mx + ox, y: my + oy + 5, "text-anchor": "middle", "font-size": 14,
+        "font-family": "ui-monospace, monospace", "font-weight": st === "mst" || st === "cur" ? 700 : 500,
+        fill: st === "idle" || st === "dead" ? C.mute : strokeFor(st) }, String(w)),
+    ]);
+  });
+
+  const nodeEls = nodeNames.map((n) => {
+    const [x, y] = g.nodes[n];
+    const inCut = reachedSet.has(n);
+    const isCur = step.current && step.current.dst === n && step.phase === "accept";
+    return S("g", {}, [
+      S("circle", { cx: x, cy: y, r: 22, fill: inCut ? C.reached : C.panel,
+        stroke: isCur ? C.mst : inCut ? C.reached : C.outside, "stroke-width": isCur ? 5 : 3 }),
+      S("text", { x, y: y + 6, "text-anchor": "middle", "font-size": 17, "font-weight": 700,
+        "font-family": "ui-monospace, monospace", fill: inCut ? C.onDark : C.ink }, n),
+    ]);
+  });
+
+  const legend = (color, label) => h("span", { style: { display: "flex", alignItems: "center", gap: "6px" } }, [
+    h("span", { style: { display: "inline-block", borderRadius: "2px", width: "14px", height: "4px", background: color } }),
+    label,
+  ]);
+
+  const graphCard = h("div", { class: "card left" }, [
+    h("div", { class: "row", style: { marginBottom: "8px" } }, [
+      h("span", { class: "lbl" }, "Start"),
+      ...startBtns,
+      isChallenge ? h("span", { style: { fontSize: "12px", color: C.mute } }, "• = start that triggers this case") : null,
+    ]),
+    S("svg", { viewBox: "0 0 520 400", class: "graph" }, [...edgeEls, ...nodeEls]),
+    h("div", { style: { display: "flex", flexWrap: "wrap", columnGap: "16px", rowGap: "4px",
+      fontSize: "12px", marginTop: "4px", color: C.mute } }, [
+      legend(C.reached, "inside the cut"),
+      legend(C.cand, "crossing edge in heap"),
+      legend(C.cur, "just popped"),
+      legend(C.mst, "in the MST"),
+      legend(C.dead, "discarded"),
+    ]),
+  ]);
+
+  /* -------- controls (right) -------- */
+  const controls = h("div", { class: "card" }, [
+    h("div", { class: "row" }, [
+      h("button", { class: "btn", style: { borderColor: C.line },
+        onclick: () => { state.i = 0; state.playing = false; render(); } }, "Reset"),
+      h("button", { class: "btn", style: { borderColor: C.line }, disabled: state.i === 0 ? "disabled" : null,
+        onclick: () => { state.playing = false; state.i -= 1; render(); } }, "← Back"),
+      h("button", { class: "btn", style: { borderColor: C.reached, background: C.reached, color: C.onDark },
+        disabled: state.i >= trace.length - 1 ? "disabled" : null,
+        onclick: () => { state.playing = false; state.i += 1; render(); } }, "Next →"),
+      h("button", { class: "btn", style: { borderColor: C.line }, disabled: state.i >= trace.length - 1 ? "disabled" : null,
+        onclick: () => { state.playing = !state.playing; render(); } }, state.playing ? "Pause" : "Play"),
+      h("span", { style: { fontSize: "12px", marginLeft: "auto", color: C.mute } }, "step " + (state.i + 1) + " / " + trace.length),
+    ]),
+    h("div", { class: "row", style: { marginTop: "8px" } }, [
+      h("button", { class: "btn", style: { borderColor: C.line, color: C.mute },
+        onclick: () => { state.reveal = !state.reveal; render(); } },
+        state.reveal ? "Hide the running answer" : "Show the running answer"),
+      h("span", { style: { fontSize: "12px", color: C.mute } }, "predict each pop before you press Next"),
+    ]),
+    h("p", { style: { fontSize: "13px", marginTop: "12px", lineHeight: "1.55" } },
+      (state.reveal || step.phase === "init" || step.phase === "done")
+        ? step.note : "Which edge gets popped next, and is it accepted or discarded?"),
+  ]);
+
+  /* -------- state card -------- */
+  const rowEl = (label, child) => h("div", { style: { display: "flex", gap: "8px", fontSize: "13px",
+    padding: "4px 0", alignItems: "baseline" } }, [
+    h("span", { class: "lbl", style: { flexShrink: 0, minWidth: "88px" } }, label),
+    h("span", {}, child),
+  ]);
+
+  const heapChips = step.heap.length === 0
+    ? h("div", { style: { fontSize: "13px", color: C.mute } }, "empty")
+    : h("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px" } },
+        step.heap.map((e, k) => {
+          const stale = reachedSet.has(e.dst);
+          return h("span", { class: "mono", title: stale ? "dst already reached, discarded when popped" : "live crossing edge",
+            style: { padding: "4px 8px", borderRadius: "4px", fontSize: "12px", border: "1px solid " + (stale ? C.line : C.cand),
+              color: stale ? C.mute : C.cand, textDecoration: stale ? "line-through" : "none",
+              fontWeight: k === 0 && !stale ? 700 : 500 } },
+            e.src + "→" + e.dst + " (" + e.w + ")");
+        }));
+
+  const stateCard = h("div", { class: "card" }, [
+    rowEl("reached", h("span", { class: "mono", style: { color: C.reached, fontWeight: 600 } },
+      "{" + step.reached.join(", ") + "}")),
+    rowEl("MST", step.mst.length === 0
+      ? h("span", { style: { color: C.mute } }, "empty")
+      : h("span", { class: "mono", style: { color: C.mst, fontWeight: 600 } }, [
+          step.mst.map((e) => e.src + "–" + e.dst + "(" + e.w + ")").join("  "),
+          h("span", { style: { marginLeft: "8px", color: C.ink } }, "= " + mstWeight),
+        ])),
+    rowEl("pops so far", h("span", { class: "mono", style: { color: C.ink } }, [
+      String(step.mst.length + step.dead.length),
+      h("span", { style: { color: C.mute } }, " (" + step.mst.length + " kept, " + step.dead.length + " discarded)"),
+    ])),
+    h("div", { style: { marginTop: "12px" } }, [
+      h("div", { class: "lbl", style: { marginBottom: "4px" } }, "edge heap (lightest first)"),
+      heapChips,
+      h("div", { style: { fontSize: "12px", marginTop: "6px", color: C.mute } },
+        "Struck-through entries are stale. Nothing deletes them eagerly. They get popped and discarded."),
+    ]),
+  ]);
+
+  /* -------- pseudocode card -------- */
+  const codeCard = h("div", { class: "card" }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "The algorithm in words"),
+    h("pre", {}, CODE.map((l, k) => h("div", {
+      style: { padding: "0 4px", borderRadius: "4px",
+        background: lines.includes(k) ? C.hilite : "transparent",
+        color: lines.includes(k) ? C.mst : C.code, fontWeight: lines.includes(k) ? 600 : 400 } }, [
+      h("span", { style: { color: C.mute } }, String(k + 1).padStart(2, " ") + " "),
+      l,
+    ]))),
+  ]);
+
+  const rightCol = h("div", { class: "right" }, [controls, stateCard, codeCard]);
+  const main = h("div", { class: "main" }, [graphCard, rightCol]);
+  const wrap = h("div", { class: "wrap" }, [header, bar, main]);
+
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(wrap);
+}
+
+render();
+</script>
+</body>
+</html>

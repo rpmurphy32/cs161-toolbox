@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Selection Sort · CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0B1120}
+  #root{min-height:100vh}
+  body{color:#E6EDF7;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 56px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;color:#8194B0;margin:6px 0 0}
+  .panel{background:#151E31;border:1px solid #2A3752;border-radius:10px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;border:1px solid #2A3752;background:#151E31;color:#E6EDF7;cursor:pointer;transition:opacity .15s,border-color .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible,input:focus-visible{outline:2px solid #5B8DEF;outline-offset:2px}
+  input[type=range]{accent-color:#5B8DEF}
+  .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8194B0}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:#8194B0;margin-top:10px}
+  .sw{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:5px}
+  @media (prefers-reduced-motion: reduce){*{transition:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------- palette */
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B",
+  fill:"#10192B", onDark:"#0B1120", code:"#A7B6CE", dimTxt:"#4A5A78",
+};
+
+/* ------------------------------------------------------------- core logic */
+const N = 10;
+const newArray = () => Array.from({ length: N }, () => Math.floor(Math.random() * 90) + 10);
+
+function genSteps(a) {
+  const s = [], arr = a.slice(), n = arr.length;
+  let comps = 0, swaps = 0;
+  const snap = o => s.push({ arr: arr.slice(), comps, swaps, ...o });
+
+  snap({ sorted: 0, msg: "Start. The whole array is unsorted. Selection sort grows a sorted prefix from the left, one final element at a time." });
+
+  for (let i = 0; i < n - 1; i++) {
+    let min = i;
+    snap({ sorted: i, i, min, msg: `Pass ${i + 1}: scan arr[${i}..${n - 1}] for its minimum. Assume arr[${i}] = ${arr[i]} is smallest for now.` });
+    for (let j = i + 1; j < n; j++) {
+      comps++;
+      snap({ sorted: i, i, min, j, hl: "cmp", msg: `Compare arr[${j}] = ${arr[j]} against the current minimum arr[${min}] = ${arr[min]}.` });
+      if (arr[j] < arr[min]) {
+        min = j;
+        snap({ sorted: i, i, min, j, hl: "newmin", msg: `arr[${j}] = ${arr[j]} is smaller. The minimum so far moves to index ${j}.` });
+      }
+    }
+    [arr[i], arr[min]] = [arr[min], arr[i]];
+    swaps++;
+    snap({ sorted: i, i, min, hl: "swap", msg: min === i
+      ? `arr[${i}] = ${arr[i]} was already the minimum, so this pass swaps it with itself. The swap runs every pass, and the value is now in its final place.`
+      : `Swap the minimum ${arr[i]} into position ${i}. That value is now in its final place.` });
+    snap({ sorted: i + 1, msg: `Position ${i} is locked. arr[0..${i}] now holds the ${i + 1} smallest values in sorted order.` });
+  }
+  snap({ sorted: n, done: true, msg: "Sorted. Every position holds its final value." });
+  return s;
+}
+
+/* ------------------------------------------------------------- pseudocode */
+const CODE = [
+  "for each position i, working left to right:",
+  "    scan the unsorted suffix for its smallest element",
+  "    each time a smaller value appears, remember it as the minimum so far",
+  "    swap the minimum into position i - every pass, even if it is already there",
+  "    position i is now final: the sorted prefix grows by one",
+  "done when every position holds its final value",
+];
+const HILITE = { init:[0], pass:[0,1], cmp:[1], newmin:[2], swap:[3], grow:[4], done:[5] };
+function phaseOf(st) {
+  if (st.done) return "done";
+  if (st.hl) return st.hl;                                 // "cmp" | "newmin" | "swap"
+  if (st.i === undefined) return st.sorted === 0 ? "init" : "grow";
+  return "pass";                                           // start of a pass
+}
+
+/* ------------------------------------------------------------- dom helper */
+function h(tag, props, kids) {
+  const e = document.createElement(tag);
+  props = props || {};
+  for (const k in props) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.setAttribute("class", v);
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+
+/* ------------------------------------------------------------- state + render */
+const state = { base: newArray(), idx: 0, playing: false, speed: 4 };
+let steps = genSteps(state.base);
+let playTimer = null;
+
+function regen() { steps = genSteps(state.base); state.idx = 0; state.playing = false; }
+
+function render() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  if (state.idx > steps.length - 1) state.idx = steps.length - 1;
+  if (state.idx < 0) state.idx = 0;
+  const st = steps[state.idx];
+
+  if (state.playing) {
+    if (state.idx >= steps.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.idx += 1; render(); }, 1000 - state.speed * 88);
+  }
+
+  /* array row */
+  const row = h("div", { style: { display: "flex", gap: "4px", marginBottom: "4px" } },
+    st.arr.map((v, i) => {
+      let bg = "#1C2942", txt = C.code;
+      if (i < st.sorted || st.done) { bg = C.green; txt = C.onDark; }
+      else if (st.hl === "cmp" && st.j === i) { bg = C.amber; txt = C.onDark; }
+      else if (st.min === i) { bg = C.blue; txt = C.onDark; }
+      return h("div", { class: "mono", style: {
+        flex: "1", height: "46px", display: "flex", alignItems: "center", justifyContent: "center",
+        borderRadius: "6px", border: "1px solid #2A3752", background: bg, color: txt, fontSize: "15px", fontWeight: 600 } }, String(v));
+    }));
+
+  /* pointer labels */
+  const ptrRow = h("div", { style: { display: "flex", gap: "4px", marginBottom: "4px", height: "16px" } },
+    st.arr.map((_, i) => {
+      const parts = [];
+      if (!st.done) {
+        if (st.i === i) parts.push("i");
+        if (st.j === i) parts.push("j");
+        if (st.min === i) parts.push("min");
+      }
+      return h("div", { class: "mono", style: { flex: "1", textAlign: "center", fontSize: "11px", color: C.green, fontWeight: 600 } },
+        parts.length ? "↑ " + parts.join("·") : "");
+    }));
+
+  const arrayPanel = h("div", { class: "panel", style: { padding: "12px", marginBottom: "16px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "Array"),
+    row, ptrRow,
+    h("div", { class: "legend" }, [
+      h("span", {}, [h("span", { class: "sw", style: { background: C.green } }), "sorted (final)"]),
+      h("span", {}, [h("span", { class: "sw", style: { background: C.blue } }), "minimum so far"]),
+      h("span", {}, [h("span", { class: "sw", style: { background: C.amber } }), "comparing"]),
+    ]),
+  ]);
+
+  /* how it works */
+  const howPanel = h("div", { class: "panel", style: { padding: "10px 12px", marginBottom: "16px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "2px" } }, "Invariant"),
+    h("div", { class: "mono", style: { fontSize: "13px", color: C.mute } },
+      "arr[0..i) is sorted and holds the i smallest values. Scan arr[i..n) for the next minimum, then swap it to index i."),
+  ]);
+
+  /* message */
+  const message = h("div", { style: { fontSize: "14px", color: C.mute, minHeight: "44px", marginBottom: "12px" } }, st.msg);
+
+  /* pseudocode */
+  const lines = HILITE[phaseOf(st)] || [];
+  const codePanel = h("div", { class: "panel", style: { padding: "10px 12px", marginBottom: "16px", overflowX: "auto" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "6px" } }, "The algorithm in words"),
+    h("div", {}, CODE.map((l, k) => {
+      const on = lines.includes(k);
+      return h("div", { class: "mono", style: {
+        fontSize: "12.5px", lineHeight: "1.7", whiteSpace: "pre", padding: "1px 8px",
+        background: on ? "rgba(240,167,60,0.14)" : "transparent",
+        borderLeft: on ? "3px solid " + C.amber : "3px solid transparent",
+        color: on ? C.ink : C.code, fontWeight: on ? 600 : 400 } }, [
+        h("span", { style: { color: C.mute } }, String(k + 1) + "  "),
+        l,
+      ]);
+    })),
+  ]);
+
+  /* controls */
+  const atEnd = state.idx >= steps.length - 1;
+  const controls = h("div", { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "16px" } }, [
+    h("button", { class: "btn", style: { borderColor: C.blue, background: C.blue, color: C.onDark },
+      onclick: () => { if (state.playing) { state.playing = false; render(); return; } if (atEnd) state.idx = 0; state.playing = true; render(); } },
+      state.playing ? "Pause" : "Play"),
+    h("button", { class: "btn", disabled: atEnd ? "disabled" : null,
+      onclick: () => { state.playing = false; if (state.idx < steps.length - 1) state.idx += 1; render(); } }, "Step"),
+    h("button", { class: "btn", disabled: state.idx === 0 ? "disabled" : null,
+      onclick: () => { state.playing = false; state.idx -= 1; render(); } }, "Back"),
+    h("button", { class: "btn", onclick: () => { state.playing = false; state.idx = 0; render(); } }, "Reset"),
+    h("button", { class: "btn", onclick: () => { state.base = newArray(); regen(); render(); } }, "New array"),
+    h("span", { class: "lbl", style: { marginLeft: "8px" } }, "Speed"),
+    h("input", { type: "range", min: "1", max: "10", value: String(state.speed), style: { width: "120px" },
+      oninput: (e) => { state.speed = +e.target.value; } }),
+    h("span", { style: { fontSize: "12px", color: C.mute, marginLeft: "auto" } }, "step " + (state.idx + 1) + " / " + steps.length),
+  ]);
+
+  /* stats */
+  const statTile = (label, value) => h("div", { class: "panel", style: { padding: "12px 16px", flex: "1 1 140px" } }, [
+    h("div", { class: "lbl" }, label),
+    h("div", { class: "mono", style: { fontSize: "24px", fontWeight: 600, marginTop: "2px" } }, String(value)),
+  ]);
+  const stats = h("div", { style: { display: "flex", gap: "12px", flexWrap: "wrap" } }, [
+    statTile("Comparisons", st.comps),
+    statTile("Swaps", st.swaps),
+  ]);
+
+  const header = h("div", { style: { marginBottom: "20px" } }, [
+    h("h1", {}, "Selection Sort"),
+    h("p", { class: "sub" }, "Each pass scans the unsorted suffix for its smallest element and swaps it to the front, so the sorted prefix grows by one. Always Θ(n²) comparisons, regardless of input."),
+  ]);
+
+  const wrap = h("div", { class: "wrap" }, [header, arrayPanel, howPanel, message, codePanel, controls, stats]);
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(wrap);
+}
+
+render();
+</script>
+</body>
+</html>

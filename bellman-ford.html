@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bellman-Ford · CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0B1120}
+  #root{min-height:100vh}
+  body{color:#E6EDF7;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:900px;margin:0 auto;padding:32px 20px 56px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;color:#8194B0;margin:6px 0 0}
+  .panel{background:#151E31;border:1px solid #2A3752;border-radius:10px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;border:1px solid #2A3752;background:#151E31;color:#E6EDF7;cursor:pointer;transition:opacity .15s,border-color .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible,input:focus-visible{outline:2px solid #5B8DEF;outline-offset:2px}
+  input[type=range]{accent-color:#5B8DEF}
+  .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8194B0}
+  table{border-collapse:collapse;font-size:13px}
+  td,th{padding:3px 10px;text-align:right}
+  th{color:#8194B0;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  .svgwrap{overflow-x:auto}
+  .row{display:flex;flex-wrap:wrap;gap:16px}
+  @media (prefers-reduced-motion: reduce){*{transition:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+
+/* ------------------------------------------------------------- palette */
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B",
+  tile:"#1C2942", onDark:"#0B1120", code:"#A7B6CE", dim:"#4A5A78", edge:"#6E82A6",
+};
+const L = (i) => "ABCDEFGH"[i];
+const fmt = (x) => (x === Infinity ? "∞" : String(x));
+const R = 20;
+
+/* ------------------------------------------------------------- graphs */
+/* edges: [srcIndex, dstIndex, weight, bow?]  (bow curves the arc so it clears nodes) */
+const GRAPHS = [
+  {
+    name: "Path plus a shortcut (lecture)",
+    note: "A to E along weight-1 edges, plus a weight-10 shortcut A to D. Relax in path order and it settles in one pass (plus one verification pass); relax in reverse and it needs a full n passes.",
+    n: 5, vb: "0 0 640 260",
+    pos: [[70,140],[210,140],[350,140],[490,140],[600,140]],
+    edges: [[0,1,1],[1,2,1],[2,3,1],[3,4,1],[0,3,10,-78]],
+  },
+  {
+    name: "Negative edge, no negative cycle",
+    note: "The edge C to B has weight -1. The shortest path to B goes A, C, B (cost 1), not the direct A to B (cost 4). Bellman-Ford handles negative edges; Dijkstra's guarantee no longer applies (though on this particular graph it happens to still get the right answer).",
+    n: 4, vb: "0 0 640 280",
+    pos: [[80,140],[340,60],[340,220],[560,140]],
+    edges: [[0,1,4],[0,2,2],[2,1,-1],[1,3,3],[2,3,6]],
+  },
+  {
+    name: "Wider graph",
+    note: "Six nodes with one negative edge (C to B). Try Best vs Worst edge order and watch the pass count change.",
+    n: 6, vb: "0 0 660 300",
+    pos: [[70,150],[250,70],[250,235],[430,110],[430,250],[590,160]],
+    edges: [[0,1,6],[0,2,4],[2,1,-2],[1,3,5],[2,4,3],[4,3,1],[3,5,2],[4,5,6]],
+  },
+];
+
+/* ------------------------------------------------------------- core (Bellman-Ford) */
+function bfDistances(g) {
+  const dist = Array(g.n).fill(Infinity), pred = Array(g.n).fill(null);
+  dist[0] = 0;
+  for (let pass = 0; pass < g.n; pass++) {
+    let changed = false;
+    for (const [u, v, w] of g.edges) {
+      if (dist[u] !== Infinity && dist[u] + w < dist[v]) { dist[v] = dist[u] + w; pred[v] = u; changed = true; }
+    }
+    if (!changed) break;
+  }
+  return { dist, pred };
+}
+
+function buildOrder(g, mode) {
+  const base = g.edges.map((_, i) => i);
+  if (mode === "listed") return base;
+  if (mode === "shuffle") {
+    const a = base.slice();
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+    return a;
+  }
+  /* Best: relax the shortest-path tree's edges parent-before-child (BFS order
+     from the source), then the non-tree edges. One pass then finalizes every
+     dist - even with negative edges - and one more pass verifies. Worst is
+     that order reversed. */
+  const { dist, pred } = bfDistances(g);
+  const treeEdge = Array(g.n).fill(null); // v -> index of the edge pred[v] -> v
+  g.edges.forEach(([u, v, w], ei) => {
+    if (pred[v] === u && dist[u] + w === dist[v] && treeEdge[v] === null) treeEdge[v] = ei;
+  });
+  const kids = Array.from({ length: g.n }, () => []);
+  for (let v = 0; v < g.n; v++) if (pred[v] !== null) kids[pred[v]].push(v);
+  const treeOrder = [];
+  const queue = [0];
+  while (queue.length) {
+    const u = queue.shift();
+    for (const v of kids[u]) { if (treeEdge[v] !== null) treeOrder.push(treeEdge[v]); queue.push(v); }
+  }
+  const inTree = new Set(treeOrder);
+  const best = treeOrder.concat(base.filter((ei) => !inTree.has(ei)));
+  return mode === "worst" ? best.slice().reverse() : best; // "best"
+}
+
+function simulate(g, order) {
+  const n = g.n, E = g.edges;
+  const dist = Array(n).fill(Infinity), pred = Array(n).fill(null);
+  dist[0] = 0;
+  const steps = [];
+  const snap = (o) => steps.push({ dist: dist.slice(), pred: pred.slice(), ...o });
+
+  snap({ phase: "init", cur: null, pass: 0, updated: null,
+    msg: `Initialize. dist[${L(0)}] = 0, every other dist = ∞. Source is ${L(0)}.` });
+
+  let pass = 0, converged = false;
+  while (pass < n && !converged) {
+    pass++;
+    snap({ phase: "passStart", cur: null, pass, updated: null,
+      msg: `Pass ${pass}: relax all ${E.length} edges once, in the chosen order.` });
+    let changed = false;
+    for (const ei of order) {
+      const [u, v, w] = E[ei];
+      const su = dist[u], before = dist[v];
+      const can = su !== Infinity && su + w < before;
+      if (can) { dist[v] = su + w; pred[v] = u; changed = true; }
+      let msg;
+      if (su === Infinity) {
+        msg = `Relax ${L(u)}→${L(v)} (w=${w}): dist[${L(u)}] = ∞, so ${L(u)} cannot improve ${L(v)}. No change.`;
+      } else if (can) {
+        msg = `Relax ${L(u)}→${L(v)} (w=${w}): dist[${L(u)}] + ${w} = ${su + w} < dist[${L(v)}] = ${fmt(before)}. Set dist[${L(v)}] = ${su + w}, pred[${L(v)}] = ${L(u)}.`;
+      } else {
+        msg = `Relax ${L(u)}→${L(v)} (w=${w}): dist[${L(u)}] + ${w} = ${su + w} is not < dist[${L(v)}] = ${fmt(before)}. No change.`;
+      }
+      snap({ phase: "relax", cur: ei, pass, relaxed: can, updated: can ? v : null, msg });
+    }
+    snap({ phase: "passEnd", cur: null, pass, changed, updated: null,
+      msg: changed ? `Pass ${pass} changed at least one dist. Another pass is needed.` : `Pass ${pass} changed nothing. dist has converged, so we can stop early.` });
+    if (!changed) converged = true;
+  }
+  snap({ phase: "done", cur: null, pass, updated: null,
+    msg: `Done in ${pass} pass${pass === 1 ? "" : "es"}. These dist values are the final shortest-path distances from ${L(0)}. If a graph had a negative cycle, pass ${n} would still change something - that's how Bellman-Ford detects them.` });
+  return { steps, passes: pass };
+}
+
+/* ------------------------------------------------------------- pseudocode */
+const CODE = [
+  "set every node's dist to infinity; the source alone starts at 0",
+  "no node has a pred yet",
+  "repeat up to n times - each round is one pass over the edge list:",
+  "    for every edge src→dst, ask:",
+  "        does src's dist + the edge weight beat dst's current dist?",
+  "        if yes, write that smaller dist and make src the pred of dst",
+  "    a pass that improves nothing means we can stop early",
+  "the dist values that remain are the true shortest-path distances",
+];
+const HILITE = {
+  init: [0, 1],
+  passStart: [2, 3],
+  relaxTrue: [4, 5],
+  relaxFalse: [4],
+  passChanged: [2],
+  passConverged: [6],
+  done: [7],
+};
+
+/* ------------------------------------------------------------- dom helpers */
+function h(tag, props, kids) {
+  const e = document.createElement(tag);
+  props = props || {};
+  for (const k in props) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.setAttribute("class", v);
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+const SVGNS = "http://www.w3.org/2000/svg";
+function S(tag, props, kids) {
+  const e = document.createElementNS(SVGNS, tag);
+  props = props || {};
+  for (const k in props) { const v = props[k]; if (v !== null && v !== undefined && v !== false) e.setAttribute(k, v); }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+
+/* ------------------------------------------------------------- edge geometry */
+function edgePath(a, b, bow) {
+  bow = bow || 0;
+  const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+  const nx = -dy / d, ny = dx / d;
+  const mx = (a.x + b.x) / 2 + nx * bow, my = (a.y + b.y) / 2 + ny * bow;
+  const trim = (p, q, r) => { const ex = q.x - p.x, ey = q.y - p.y, dd = Math.hypot(ex, ey) || 1; return { x: p.x + ex / dd * r, y: p.y + ey / dd * r }; };
+  const s = trim(a, { x: mx, y: my }, R + 2), e = trim(b, { x: mx, y: my }, R + 17);
+  const ang = Math.atan2(e.y - my, e.x - mx) * 180 / Math.PI;
+  return { d: `M${s.x},${s.y} Q${mx},${my} ${e.x},${e.y}`, tip: e, ang, lx: mx + nx * 9, ly: my + ny * 9 };
+}
+
+/* ------------------------------------------------------------- state */
+const state = { gi: 0, mode: "listed", order: null, sim: null, idx: 0, playing: false, speed: 4 };
+function rebuild() {
+  const g = GRAPHS[state.gi];
+  state.order = buildOrder(g, state.mode);
+  state.sim = simulate(g, state.order);
+  state.idx = 0; state.playing = false;
+}
+rebuild();
+let playTimer = null;
+
+/* ------------------------------------------------------------- render */
+function render() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  const g = GRAPHS[state.gi];
+  const steps = state.sim.steps;
+  if (state.idx > steps.length - 1) state.idx = steps.length - 1;
+  if (state.idx < 0) state.idx = 0;
+  const st = steps[state.idx];
+  const atEnd = state.idx >= steps.length - 1;
+
+  if (state.playing) {
+    if (atEnd) state.playing = false;
+    else playTimer = setTimeout(() => { state.idx += 1; render(); }, 1000 - state.speed * 88);
+  }
+
+  const pos = g.pos.map(([x, y]) => ({ x, y }));
+  const curEdge = st.cur;
+  const predSet = new Set();
+  st.pred.forEach((p, v) => { if (p !== null) predSet.add(p + "->" + v); });
+
+  /* graph SVG */
+  const edgeEls = g.edges.map(([u, v, w, bow], i) => {
+    const gp = edgePath(pos[u], pos[v], bow);
+    const isCur = curEdge === i;
+    const inTree = predSet.has(u + "->" + v);
+    let stroke = C.edge, sw = 2, op = 1;
+    if (inTree) { stroke = C.blue; sw = 2.6; }
+    if (isCur) { stroke = st.relaxed ? C.green : C.amber; sw = 3.4; }
+    return S("g", { opacity: op }, [
+      S("path", { d: gp.d, fill: "none", stroke, "stroke-width": sw }),
+      S("polygon", { points: "0,-8 18,0 0,8", fill: stroke, transform: `translate(${gp.tip.x},${gp.tip.y}) rotate(${gp.ang})` }),
+      S("rect", { x: gp.lx - 12, y: gp.ly - 10, width: 24, height: 18, rx: 4, fill: C.bg, stroke, "stroke-width": 1 }),
+      S("text", { x: gp.lx, y: gp.ly + 4, "text-anchor": "middle", "font-size": 12, "font-family": "ui-monospace, monospace", fill: stroke === C.line ? C.mute : stroke }, String(w)),
+    ]);
+  });
+  const nodeEls = pos.map((p, v) => {
+    const isSrc = v === 0;
+    const updated = st.updated === v;
+    const cur = curEdge !== null && (g.edges[curEdge][0] === v || g.edges[curEdge][1] === v);
+    let fill = C.tile, stroke = C.dim, sw = 2;
+    if (isSrc) stroke = C.blue;
+    if (cur) { stroke = C.amber; sw = 3; }
+    if (updated) { stroke = C.green; fill = "#12321f"; sw = 3; }
+    return S("g", {}, [
+      S("circle", { cx: p.x, cy: p.y, r: R, fill, stroke, "stroke-width": sw }),
+      S("text", { x: p.x, y: p.y + 5, "text-anchor": "middle", "font-size": 15, "font-weight": 700, "font-family": "ui-monospace, monospace", fill: C.ink }, L(v)),
+      S("text", { x: p.x, y: p.y + R + 15, "text-anchor": "middle", "font-size": 12, "font-family": "ui-monospace, monospace", fill: st.dist[v] === Infinity ? C.dim : C.green }, "d=" + fmt(st.dist[v]) ),
+    ]);
+  });
+  const graphPanel = h("div", { class: "panel", style: { padding: "10px" } }, [
+    h("div", { class: "svgwrap" }, S("svg", { viewBox: g.vb, style: { width: "100%", height: "auto", "min-width": "480px", display: "block", "max-height": "300px" } }, [...edgeEls, ...nodeEls])),
+    h("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px 14px", padding: "2px 4px", fontSize: "12px", color: C.mute } }, [
+      h("span", {}, [h("span", { style: { color: C.amber } }, "amber"), " = edge being relaxed"]),
+      h("span", {}, [h("span", { style: { color: C.green } }, "green"), " = dist just improved"]),
+      h("span", {}, [h("span", { style: { color: C.blue } }, "blue"), " = current pred / shortest-path tree"]),
+      h("span", {}, "d = current dist from A"),
+    ]),
+  ]);
+
+  /* controls */
+  const modeBtn = (m, label) => h("button", { class: "btn",
+    style: { borderColor: state.mode === m ? C.blue : C.line, background: state.mode === m ? C.blue : "transparent", color: state.mode === m ? C.onDark : C.ink },
+    onclick: () => { state.mode = m; rebuild(); render(); } }, label);
+
+  const orderBar = h("div", { class: "panel", style: { padding: "12px", marginTop: "16px" } }, [
+    h("div", { class: "row", style: { alignItems: "center" } }, [
+      h("span", { class: "lbl" }, "Edge relax order"),
+      modeBtn("listed", "As listed"),
+      modeBtn("best", "Best (tree order)"),
+      modeBtn("worst", "Worst (reverse)"),
+      modeBtn("shuffle", "Shuffle"),
+      h("span", { class: "mono", style: { marginLeft: "auto", fontSize: "13px", color: C.amber } }, `converges in ${state.sim.passes} pass${state.sim.passes === 1 ? "" : "es"}`),
+    ]),
+    h("div", { style: { display: "flex", flexWrap: "wrap", gap: "5px", marginTop: "10px" } },
+      state.order.map((ei, k) => {
+        const [u, v, w] = g.edges[ei];
+        const isCur = curEdge === ei;
+        return h("span", { class: "mono", style: { padding: "3px 7px", borderRadius: "4px", fontSize: "12px",
+          border: "1px solid " + (isCur ? C.amber : C.line), background: isCur ? "rgba(240,167,60,0.14)" : C.tile,
+          color: isCur ? C.amber : C.code } }, `${L(u)}→${L(v)}(${w})`);
+      })),
+    h("div", { style: { fontSize: "12px", color: C.mute, marginTop: "8px" } },
+      state.mode === "best"
+        ? "Best relaxes the shortest-path tree's edges parent-before-child, then the rest. Every dist is final after one pass - even with negative edges - and one more pass verifies nothing changes."
+        : state.mode === "worst"
+        ? "Worst reverses the best (tree) order, so each pass can extend the settled part of the tree by only about one edge - close to the n·m worst case."
+        : "Each pass relaxes all m edges once, in this order. The order decides how many passes it takes for every dist to settle."),
+  ]);
+
+  /* message + controls */
+  const controls = h("div", { class: "panel", style: { padding: "12px", marginTop: "16px" } }, [
+    h("div", { class: "row", style: { alignItems: "center" } }, [
+      h("button", { class: "btn", style: { borderColor: C.blue, background: C.blue, color: C.onDark },
+        onclick: () => { if (state.playing) { state.playing = false; render(); return; } if (atEnd) state.idx = 0; state.playing = true; render(); } }, state.playing ? "Pause" : "Play"),
+      h("button", { class: "btn", disabled: atEnd ? "disabled" : null, onclick: () => { state.playing = false; if (state.idx < steps.length - 1) state.idx += 1; render(); } }, "Step"),
+      h("button", { class: "btn", disabled: state.idx === 0 ? "disabled" : null, onclick: () => { state.playing = false; state.idx -= 1; render(); } }, "Back"),
+      h("button", { class: "btn", onclick: () => { state.playing = false; state.idx = 0; render(); } }, "Reset"),
+      h("button", { class: "btn", onclick: () => { state.gi = (state.gi + 1) % GRAPHS.length; rebuild(); render(); } }, "New graph"),
+      h("span", { class: "lbl", style: { marginLeft: "8px" } }, "Speed"),
+      h("input", { type: "range", min: "1", max: "10", value: String(state.speed), style: { width: "110px" }, oninput: (e) => { state.speed = +e.target.value; } }),
+      h("span", { style: { fontSize: "12px", color: C.mute, marginLeft: "auto" } }, "step " + (state.idx + 1) + " / " + steps.length),
+    ]),
+    h("div", { style: { fontSize: "14px", color: C.mute, minHeight: "42px", marginTop: "10px" } }, st.msg),
+  ]);
+
+  /* dist/pred table + invariant */
+  const table = h("table", { class: "mono" }, [
+    h("thead", {}, h("tr", {}, [
+      h("th", { style: { textAlign: "left" } }, "node"),
+      h("th", {}, "dist"),
+      h("th", {}, "pred"),
+    ])),
+    h("tbody", {}, Array.from({ length: g.n }, (_, v) => {
+      const isUpd = st.updated === v;
+      return h("tr", { style: isUpd ? { background: "rgba(45,212,160,0.12)" } : undefined }, [
+        h("td", { style: { textAlign: "left", color: v === 0 ? C.blue : C.ink } }, L(v)),
+        h("td", { style: { color: st.dist[v] === Infinity ? C.dim : C.ink } }, fmt(st.dist[v])),
+        h("td", { style: { color: C.mute } }, st.pred[v] === null ? "·" : L(st.pred[v])),
+      ]);
+    })),
+  ]);
+  const passInfo = h("div", { style: { marginTop: "10px", fontSize: "12.5px", color: C.mute } },
+    ["Pass ", h("span", { class: "mono", style: { color: C.amber } }, String(st.pass)),
+     ". Invariant: after pass i, dist[v] is at most the weight of any path from A to v that uses ≤ i edges."]);
+
+  const sidePanel = h("div", { class: "panel", style: { padding: "12px", flex: "1 1 240px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "dist / pred table"),
+    table, passInfo,
+  ]);
+  const hkey = st.phase === "relax" ? (st.relaxed ? "relaxTrue" : "relaxFalse")
+    : st.phase === "passEnd" ? (st.changed ? "passChanged" : "passConverged")
+    : st.phase;
+  const lit = HILITE[hkey] || [];
+  const notePanel = h("div", { class: "panel", style: { padding: "12px", flex: "2 1 320px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "The algorithm in words"),
+    h("div", { class: "mono", style: { fontSize: "12.5px", lineHeight: "1.75", overflowX: "auto" } },
+      CODE.map((l, k) => {
+        const on = lit.includes(k);
+        return h("div", { style: { whiteSpace: "pre", padding: "1px 8px",
+          background: on ? "rgba(240,167,60,0.14)" : "transparent",
+          borderLeft: "3px solid " + (on ? "#F0A73C" : "transparent"),
+          color: on ? C.amber : C.code, fontWeight: on ? 600 : 400 } }, l);
+      })),
+    h("p", { style: { fontSize: "12.5px", color: C.mute, margin: "10px 0 0" } }, g.note),
+  ]);
+  const lower = h("div", { class: "row", style: { marginTop: "16px" } }, [notePanel, sidePanel]);
+
+  const header = h("div", { style: { marginBottom: "18px" } }, [
+    h("h1", {}, "Bellman-Ford"),
+    h("p", { class: "sub" }, "Single-source shortest paths by relaxing every edge, pass after pass, until nothing changes. Reorder the edges to see why the relax order sets the pass count - and with it the total running time: near O(n+m) at best, O(n·m) at worst."),
+  ]);
+
+  const wrap = h("div", { class: "wrap" }, [header, graphPanel, orderBar, controls, lower]);
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(wrap);
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.target && e.target.tagName === "INPUT") return;
+  if (e.key === "ArrowRight") { e.preventDefault(); state.playing = false; if (state.idx < state.sim.steps.length - 1) state.idx += 1; render(); }
+  if (e.key === "ArrowLeft") { e.preventDefault(); state.playing = false; if (state.idx > 0) state.idx -= 1; render(); }
+  if (e.key === " ") { e.preventDefault(); state.playing = !state.playing; render(); }
+});
+
+render();
+</script>
+</body>
+</html>

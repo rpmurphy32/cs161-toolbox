@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BST Insert / Delete Stepper: CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0E1116}
+  #root{min-height:100vh}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #4FB8E8;outline-offset:2px}
+  @media (prefers-reduced-motion: reduce){*{transition:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+"use strict";
+
+const C = {
+  bg: "#0E1116",
+  panel: "#161B24",
+  panel2: "#1D2430",
+  line: "#2A3441",
+  ink: "#DDE3EC",
+  dim: "#7A8799",
+  edge: "#3A4553",
+  target: "#F0776C", // node being deleted
+  succ: "#F4B740", // successor
+  path: "#4FB8E8", // descent path
+  ok: "#5FD08A",
+};
+
+let ID = 0;
+const nid = () => ++ID;
+const mk = (v) => ({ value: v, left: null, right: null, parent: null, id: nid() });
+
+function bstInsert(tree, v) {
+  const n = mk(v);
+  if (!tree.root) {
+    tree.root = n;
+    return n;
+  }
+  let c = tree.root;
+  for (;;) {
+    if (v < c.value) {
+      if (!c.left) {
+        c.left = n;
+        n.parent = c;
+        return n;
+      }
+      c = c.left;
+    } else if (v > c.value) {
+      if (!c.right) {
+        c.right = n;
+        n.parent = c;
+        return n;
+      }
+      c = c.right;
+    } else return null;
+  }
+}
+
+const ser = (n) => (n ? { value: n.value, id: n.id, left: ser(n.left), right: ser(n.right) } : null);
+
+function replaceNode(tree, oldN, newN) {
+  const p = oldN.parent;
+  if (newN) newN.parent = p;
+  if (!p) tree.root = newN;
+  else if (p.left === oldN) p.left = newN;
+  else p.right = newN;
+}
+
+const minNode = (n) => {
+  while (n && n.left) n = n.left;
+  return n;
+};
+
+/* ---------- steps ---------- */
+function buildSteps(startValues, op, v) {
+  const tree = { root: null };
+  startValues.forEach((x) => bstInsert(tree, x));
+
+  const steps = [];
+  const push = (title, detail, hl, tag, kind) =>
+    steps.push({ tree: ser(tree.root), title, detail, hl: hl || {}, tag: tag || null, kind: kind || null });
+
+  push(
+    "Starting BST",
+    "Left descendants smaller, right descendants larger, at every node. No balance requirement of any kind.",
+    {},
+    null,
+    "start"
+  );
+
+  /* ---- INSERT ---- */
+  if (op === "insert") {
+    let c = tree.root,
+      pathIds = [];
+    while (c) {
+      pathIds.push(c.id);
+      if (v === c.value) {
+        push(`${v} is already in the tree`, "No duplicates in this class: search_or_insert returns the existing node.", { path: pathIds, target: c.id }, null, "walk");
+        return steps;
+      }
+      const next = v < c.value ? c.left : c.right;
+      push(
+        `At ${c.value}: ${v} ${v < c.value ? "<" : ">"} ${c.value}, go ${v < c.value ? "left" : "right"}`,
+        next ? `Keep descending.` : `Nothing there. This is where ${v} belongs.`,
+        { path: [...pathIds] },
+        null,
+        "walk"
+      );
+      if (!next) break;
+      c = next;
+    }
+    const n = bstInsert(tree, v);
+    push(`Inserted ${v}`, `Placed as a leaf. No rebalancing. A plain BST never restructures on insert, which is exactly why sorted input degenerates into a chain.`, { target: n.id, path: pathIds }, null, "attach");
+    return steps;
+  }
+
+  /* ---- DELETE ---- */
+  let c = tree.root,
+    pathIds = [];
+  while (c && c.value !== v) {
+    pathIds.push(c.id);
+    c = v < c.value ? c.left : c.right;
+  }
+  if (!c) {
+    push(`${v} is not in the tree`, "Nothing to delete.", { path: pathIds }, null, "walk");
+    return steps;
+  }
+  pathIds.push(c.id);
+  const nKids = (c.left ? 1 : 0) + (c.right ? 1 : 0);
+
+  push(
+    `Found ${v}. It has ${nKids} child${nKids === 1 ? "" : "ren"}`,
+    nKids === 2
+      ? `Two children is the hard case. You cannot just remove it. Which child would take its place?`
+      : nKids === 1
+      ? `One child. Easy: pull that child up into this node's place.`
+      : `A leaf. Easy: just remove it.`,
+    { target: c.id, path: pathIds },
+    nKids === 2 ? "TWO CHILDREN" : nKids === 1 ? "ONE CHILD" : "LEAF",
+    nKids === 2 ? "case2" : c.left ? "spliceL" : "spliceR"
+  );
+
+  if (nKids === 0) {
+    replaceNode(tree, c, null);
+    push(`Removed ${v}`, `A leaf has no children to rehome. Equivalently: replace it with its (empty) right child.`, {}, null, "spliceR");
+  } else if (nKids === 1) {
+    const kid = c.left || c.right;
+    replaceNode(tree, c, kid);
+    push(
+      `Pulled ${kid.value} up into ${v}'s place`,
+      `The BST property survives because that subtree was already on the correct side of every ancestor. Nothing about its relationship to them changed.`,
+      { target: kid.id },
+      null,
+      c.left ? "spliceL" : "spliceR"
+    );
+  } else {
+    /* two children: successor */
+    const s = minNode(c.right);
+    const sPath = [];
+    let w = c.right;
+    while (w) {
+      sPath.push(w.id);
+      w = w.left;
+    }
+    push(
+      `Find the SUCCESSOR of ${v}`,
+      `Go RIGHT once (to ${c.right.value}), then LEFT as far as possible. That lands on ${s.value}, the smallest value greater than ${v}.`,
+      { target: c.id, succ: s.id, path: sPath },
+      "TWO CHILDREN",
+      "succ"
+    );
+    push(
+      `Successor is ${s.value}`,
+      `Because it is the minimum of the right subtree, ${s.value} has NO left child. That is what makes it easy to remove afterwards.`,
+      { target: c.id, succ: s.id },
+      "TWO CHILDREN",
+      "succ"
+    );
+
+    const oldV = c.value;
+    const succV = s.value;
+    c.value = s.value;
+    s.value = oldV;
+    push(
+      `Swap values: ${oldV} ↔ ${succV}`,
+      `${c.value} now sits where ${oldV} was, and ${oldV} has moved down to the successor's position. The tree is momentarily not a valid BST (${oldV} is in the wrong place), but only for one step.`,
+      { target: s.id, succ: c.id },
+      "TWO CHILDREN",
+      "swap"
+    );
+
+    replaceNode(tree, s, s.right);
+    push(
+      `Delete the successor node (now holding ${oldV})`,
+      `It had no left child, so this is the one-child (or leaf) case${s.right ? `: pull ${s.right.value} up into its place` : `: just remove it`}. Valid BST again.`,
+      {},
+      "TWO CHILDREN",
+      "spliceS"
+    );
+  }
+
+  push("Done", `${v} is gone. Note the tree was NOT restructured beyond this. Plain BST deletion does no rotations, no splaying, no rebalancing.`, {}, null, "done");
+  return steps;
+}
+
+/* ---------- layout ---------- */
+function layout(root) {
+  const pos = {};
+  let i = 0,
+    maxD = 0;
+  (function walk(n, d) {
+    if (!n) return;
+    walk(n.left, d + 1);
+    pos[n.id] = { x: i++, y: d, value: n.value };
+    maxD = Math.max(maxD, d);
+    walk(n.right, d + 1);
+  })(root, 0);
+  const edges = [];
+  (function walk(n) {
+    if (!n) return;
+    if (n.left) {
+      edges.push([n.id, n.left.id]);
+      walk(n.left);
+    }
+    if (n.right) {
+      edges.push([n.id, n.right.id]);
+      walk(n.right);
+    }
+  })(root);
+  return { pos, edges, w: i, d: maxD + 1 };
+}
+
+/* Fixed canvas across the whole trace so the tree drawing (and everything
+   below it) never resizes while stepping. Recomputed only per new tree. */
+function computeCanvas(steps) {
+  const GX = 54, GY = 66;
+  let W = 160, H = GY;
+  for (const st of steps) {
+    if (!st || !st.tree) continue;
+    const L = layout(st.tree);
+    W = Math.max(W, L.w * GX + 30);
+    H = Math.max(H, L.d * GY);
+  }
+  return { W, H };
+}
+
+const TINT = { LEAF: C.ok, "ONE CHILD": C.ok, "TWO CHILDREN": C.target };
+const RULE = {
+  LEAF: "just remove it",
+  "ONE CHILD": "pull the child up into its place",
+  "TWO CHILDREN": "successor = min of the RIGHT subtree → swap values → delete the successor",
+};
+
+/* ------------------------------------------------------------- pseudocode
+   Original paraphrase, deliberately informal. Step kinds map to lines. */
+const PC = {
+  insert: [
+    "insert(v):",
+    "  walk down from the root: smaller goes left, larger goes right",
+    "  when the walk steps off the tree, hang a new leaf holding v there",
+    "  done. a plain BST never rebalances",
+  ],
+  delete: [
+    "delete(v): walk down to the node holding v, then:",
+    "  no left child?  splice its right subtree up into its place",
+    "  no right child? splice its left subtree up into its place",
+    "  two children? find the successor: right once, then left all the way",
+    "    swap the doomed value with the successor's value",
+    "    the successor has no left child, so splice it out via its right subtree",
+  ],
+};
+const PC_HILITE = {
+  insert: { start: [0], walk: [1], attach: [2, 3] },
+  delete: { start: [0], walk: [0], case2: [3], spliceR: [1], spliceL: [2], succ: [3], swap: [4], spliceS: [5], done: [] },
+};
+
+/* --------------------------------------------------------------- dom help */
+const SVGNS = "http://www.w3.org/2000/svg";
+function mkEl(ns, tag, props, kids) {
+  const e = ns ? document.createElementNS(ns, tag) : document.createElement(tag);
+  props = props || {};
+  for (const k in props) {
+    const val = props[k];
+    if (val === null || val === undefined || val === false) continue;
+    if (k === "style" && typeof val === "object") Object.assign(e.style, val);
+    else if (k === "class") e.setAttribute("class", val);
+    else if (k.startsWith("on") && typeof val === "function") e.addEventListener(k.slice(2).toLowerCase(), val);
+    else e.setAttribute(k, val);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+const h = (tag, props, kids) => mkEl(null, tag, props, kids);
+const S = (tag, props, kids) => mkEl(SVGNS, tag, props, kids);
+
+/* --------------------------------------------------------------- view helpers */
+function Btn(label, onClick, opts) {
+  opts = opts || {};
+  const disabled = !!opts.disabled, primary = !!opts.primary;
+  return h("button", {
+    disabled: disabled ? "disabled" : null,
+    onclick: disabled ? null : onClick,
+    style: {
+      background: disabled ? C.panel2 : primary ? C.ink : C.panel2,
+      color: disabled ? C.dim : primary ? C.bg : C.ink,
+      border: "1px solid " + (disabled ? C.line : primary ? C.ink : C.line),
+      borderRadius: "6px",
+      padding: "8px 14px",
+      fontSize: "13px",
+      fontWeight: 600,
+      cursor: disabled ? "not-allowed" : "pointer",
+      fontFamily: "inherit",
+    },
+  }, label);
+}
+
+function Legend(c, t) {
+  return h("span", { style: { display: "inline-flex", alignItems: "center", gap: "5px" } }, [
+    h("span", { style: { width: "9px", height: "9px", borderRadius: "9px", background: c, display: "inline-block" } }),
+    t,
+  ]);
+}
+
+function TreeView(root, hl, canvas) {
+  const GX = 54, GY = 66, R = 18;
+  const H0 = canvas ? canvas.H : GY;
+  if (!root) return h("div", { style: { color: C.dim, padding: "40px", minHeight: H0 + "px", display: "flex", alignItems: "center", justifyContent: "center" } }, "empty tree");
+  const L = layout(root);
+  const W = canvas ? canvas.W : Math.max(L.w * GX + 30, 160);
+  const H = canvas ? canvas.H : L.d * GY;
+  const px = (id) => L.pos[id].x * GX + GX / 2 + 15;
+  const py = (id) => L.pos[id].y * GY + GY / 2;
+  const pathSet = new Set(hl.path || []);
+  const colorOf = (id) =>
+    hl.target === id ? C.target : hl.succ === id ? C.succ : pathSet.has(id) ? C.path : null;
+
+  const edgeEls = L.edges.map(([a, b]) =>
+    S("line", { x1: px(a), y1: py(a), x2: px(b), y2: py(b), stroke: C.edge, "stroke-width": 1.5 }));
+
+  const nodeEls = Object.keys(L.pos).map((sk) => {
+    const id = Number(sk), n = L.pos[id], c = colorOf(id);
+    return S("g", {}, [
+      S("circle", { cx: px(id), cy: py(id), r: R, fill: c || C.panel2, stroke: c || C.line, "stroke-width": c ? 2.5 : 1.5 }),
+      S("text", {
+        x: px(id), y: py(id) + 4, "text-anchor": "middle", "font-size": 13, "font-weight": 600,
+        fill: c ? "#0E1116" : C.ink, "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace",
+      }, String(n.value)),
+    ]);
+  });
+
+  return S("svg", { width: W, height: H, style: { overflow: "visible", maxWidth: "100%" } }, [...edgeEls, ...nodeEls]);
+}
+
+/* --------------------------------------------------------------- state + actions */
+const state = { size: 9, values: [50, 30, 70, 20, 40, 60, 85, 55, 65], op: "delete", traceOp: "delete", target: 70, steps: [], i: 0, canvas: { W: 160, H: 66 }, playing: false, speed: 4 };
+let playTimer = null;
+
+function buildTrace() {
+  state.traceOp = state.op;
+  state.steps = buildSteps(state.values, state.op, Number(state.target));
+  state.canvas = computeCanvas(state.steps);
+  state.i = 0;
+}
+
+function run() {
+  buildTrace();
+  state.playing = true; /* Run auto-plays the whole trace from step 0 */
+  render();
+}
+
+function randomTree(n) {
+  const pool = [];
+  while (pool.length < n) {
+    const v = Math.floor(Math.random() * 90) + 10;
+    if (!pool.includes(v)) pool.push(v);
+  }
+  state.values = pool;
+  const t = pool[Math.floor(Math.random() * pool.length)];
+  state.target = t;
+  state.traceOp = state.op;
+  state.steps = buildSteps(pool, state.op, t);
+  state.canvas = computeCanvas(state.steps);
+  state.i = 0;
+  state.playing = false; /* rebuilds without an explicit Run never auto-play */
+  render();
+}
+
+/* --------------------------------------------------------------- render */
+function render() {
+  /* clear any pending auto-play tick so timers never stack */
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  const step = state.steps[state.i];
+  const tint = step && step.tag ? TINT[step.tag] : null;
+
+  /* auto-play: advance one step per tick, stop at the end */
+  if (state.playing) {
+    if (state.i >= state.steps.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.i += 1; render(); }, 1000 - state.speed * 88);
+  }
+
+  /* header */
+  const header = h("div", { style: { marginBottom: "16px" } }, [
+    h("div", { style: { fontSize: "19px", fontWeight: 700, letterSpacing: "-0.2px" } }, "BST insert / delete stepper"),
+    h("div", { style: { color: C.dim, fontSize: "13px", marginTop: "3px" } },
+      "Plain BST: no rotations, no splaying, no rebalancing. Arrow keys step."),
+  ]);
+
+  /* controls bar */
+  const sizeNum = h("span", { style: { fontFamily: "ui-monospace, monospace", color: C.ink, width: "18px" } }, String(state.size));
+  const rangeInput = h("input", {
+    type: "range", min: "4", max: "14", value: String(state.size), style: { width: "90px" },
+    oninput: (e) => { state.size = Number(e.target.value); sizeNum.textContent = String(state.size); },
+  });
+
+  const opSelect = h("select", {
+    onchange: (e) => { state.op = e.target.value; },
+    style: { background: C.panel2, color: C.ink, border: "1px solid " + C.line, borderRadius: "6px", padding: "8px 10px", fontSize: "13px", fontFamily: "inherit" },
+  }, [
+    h("option", { value: "delete", selected: state.op === "delete" ? "selected" : null }, "delete"),
+    h("option", { value: "insert", selected: state.op === "insert" ? "selected" : null }, "insert"),
+  ]);
+
+  const targetInput = h("input", {
+    type: "number", value: String(state.target),
+    oninput: (e) => { state.target = e.target.value; },
+    style: { background: C.panel2, color: C.ink, border: "1px solid " + C.line, borderRadius: "6px", padding: "8px 10px", width: "74px", fontSize: "13px", fontFamily: "ui-monospace, monospace" },
+  });
+
+  const controls = h("div", {
+    style: { background: C.panel, border: "1px solid " + C.line, borderRadius: "10px", padding: "14px",
+      display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "14px" },
+  }, [
+    Btn("New random tree", () => randomTree(state.size)),
+    h("label", { style: { fontSize: "12px", color: C.dim, display: "flex", alignItems: "center", gap: "7px" } }, [
+      "nodes", rangeInput, sizeNum,
+    ]),
+    h("div", { style: { width: "1px", height: "26px", background: C.line } }),
+    opSelect,
+    targetInput,
+    Btn("Run", () => run(), { primary: true }),
+    h("div", { style: { marginLeft: "auto", fontSize: "11px", color: C.dim, fontFamily: "ui-monospace, monospace" } },
+      state.values.slice().sort((a, b) => a - b).join(" ")),
+  ]);
+
+  /* tint banner */
+  const banner = h("div", {
+    style: { background: tint ? tint + "1A" : C.panel, border: "1px solid " + (tint || C.line), borderRadius: "10px",
+      padding: "12px 16px", marginBottom: "14px", display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap", minHeight: "58px" },
+  }, (step && step.tag) ? [
+    h("div", { style: { fontFamily: "ui-monospace, monospace", fontWeight: 700, fontSize: "15px", letterSpacing: "1px", color: tint } }, step.tag),
+    h("div", { style: { width: "1px", height: "22px", background: C.line } }),
+    h("div", { style: { fontSize: "13px", fontWeight: 600 } }, RULE[step.tag]),
+  ] : h("div", { style: { fontSize: "13px", color: C.dim, fontFamily: "ui-monospace, monospace" } }, "· descending ·"));
+
+  /* tree card */
+  const treeCard = h("div", {
+    style: { background: C.panel, border: "1px solid " + C.line, borderRadius: "10px", padding: "24px 14px",
+      marginBottom: "14px", display: "flex", justifyContent: "center", overflowX: "auto" },
+  }, step ? TreeView(step.tree, step.hl, state.canvas) : null);
+
+  /* nav / step card */
+  const navCard = h("div", { style: { background: C.panel, border: "1px solid " + C.line, borderRadius: "10px", padding: "14px" } }, [
+    h("div", { style: { display: "flex", gap: "10px", alignItems: "center", marginBottom: "10px", flexWrap: "wrap" } }, [
+      Btn(state.playing ? "Pause" : "Play", () => {
+        if (state.playing) { state.playing = false; render(); return; }
+        if (state.i >= state.steps.length - 1) state.i = 0; /* Play at the end restarts */
+        state.playing = true;
+        render();
+      }, { primary: true }),
+      Btn("← Prev", () => { state.playing = false; state.i = Math.max(0, state.i - 1); render(); }, { disabled: state.i === 0 }),
+      Btn("Next →", () => { state.playing = false; state.i = Math.min(state.steps.length - 1, state.i + 1); render(); }, { primary: true, disabled: state.i >= state.steps.length - 1 }),
+      h("div", { style: { fontFamily: "ui-monospace, monospace", fontSize: "12px", color: C.dim } },
+        "step " + (state.steps.length ? state.i + 1 : 0) + " / " + state.steps.length),
+      h("label", { style: { fontSize: "12px", color: C.dim, display: "flex", alignItems: "center", gap: "7px" } }, [
+        "speed",
+        h("input", { type: "range", min: "1", max: "10", value: String(state.speed), style: { width: "90px" },
+          oninput: (e) => { state.speed = Number(e.target.value); } }),
+      ]),
+      h("div", { style: { marginLeft: "auto", display: "flex", gap: "12px", fontSize: "11px", color: C.dim, flexWrap: "wrap" } }, [
+        Legend(C.path, "descent path"),
+        Legend(C.target, "target"),
+        Legend(C.succ, "successor"),
+      ]),
+    ]),
+    h("div", { style: { minHeight: "92px" } }, [
+      step ? h("div", { style: { fontWeight: 700, fontSize: "14px", marginBottom: "4px" } }, step.title) : null,
+      step ? h("div", { style: { fontSize: "13px", color: C.dim, lineHeight: 1.55 } }, step.detail) : null,
+    ]),
+  ]);
+
+  /* pseudocode card (step-synced) */
+  const pcLines = PC[state.traceOp] || PC.delete;
+  const pcMap = PC_HILITE[state.traceOp] || {};
+  const pcActive = (step && step.kind && pcMap[step.kind]) || [];
+  const codeCard = h("div", {
+    style: { background: C.panel, border: "1px solid " + C.line, borderRadius: "10px", padding: "14px", marginTop: "14px" },
+  }, [
+    h("div", { style: { fontSize: "11px", fontWeight: 600, letterSpacing: "1px", textTransform: "uppercase", color: C.dim, marginBottom: "8px" } },
+      "The algorithm in words · " + state.traceOp),
+    h("div", { style: { overflowX: "auto" } }, pcLines.map((l, k) => h("div", {
+      style: {
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontSize: "12.5px",
+        whiteSpace: "pre",
+        lineHeight: "1.8",
+        padding: "1px 8px",
+        background: pcActive.includes(k) ? "rgba(240,167,60,0.14)" : "transparent",
+        borderLeft: "3px solid " + (pcActive.includes(k) ? "#F0A73C" : "transparent"),
+        color: pcActive.includes(k) ? C.ink : C.dim,
+        fontWeight: pcActive.includes(k) ? 600 : 400,
+      },
+    }, l))),
+  ]);
+
+  /* footer notes */
+  const footer = h("div", { style: { marginTop: "14px", fontSize: "12px", color: C.dim, lineHeight: 1.7 } }, [
+    h("strong", { style: { color: C.ink } }, "Successor = min of the RIGHT subtree."),
+    " Go right once, then left as far as you can. It has no left child, which is why deleting it afterwards is easy.",
+    h("br", {}),
+    h("strong", { style: { color: C.ink } }, "Do not confuse with splay delete"),
+    ", which splays the target to the root, splits, then joins by splaying the ",
+    h("em", {}, "max of the LEFT"),
+    " tree. No successor, no value swap.",
+    h("br", {}),
+    h("strong", { style: { color: C.ink } }, "No rebalancing here."),
+    " That is why inserting sorted data gives a chain and worst-case operations are Θ(n).",
+  ]);
+
+  const inner = h("div", { style: { maxWidth: "940px", margin: "0 auto" } }, [header, controls, banner, treeCard, navCard, codeCard, footer]);
+  const wrap = h("div", {
+    style: { background: C.bg, color: C.ink, minHeight: "100%", padding: "20px 18px 32px",
+      fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" },
+  }, inner);
+
+  const rootEl = document.getElementById("root");
+  rootEl.textContent = "";
+  rootEl.appendChild(wrap);
+}
+
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") { state.playing = false; state.i = Math.min(state.i + 1, state.steps.length - 1); render(); }
+    if (e.key === "ArrowLeft") { state.playing = false; state.i = Math.max(state.i - 1, 0); render(); }
+  });
+}
+
+buildTrace(); /* initial page load shows the trace without auto-playing; only Run starts playback */
+render();
+</script>
+</body>
+</html>

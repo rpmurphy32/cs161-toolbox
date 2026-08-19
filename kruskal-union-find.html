@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kruskal + Union-Find · CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0B1120}
+  #root{min-height:100vh}
+  body{color:#E6EDF7;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:900px;margin:0 auto;padding:32px 20px 56px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;color:#8194B0;margin:6px 0 0}
+  .panel{background:#151E31;border:1px solid #2A3752;border-radius:10px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;border:1px solid #2A3752;background:#151E31;color:#E6EDF7;cursor:pointer;transition:opacity .15s,border-color .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible,input:focus-visible{outline:2px solid #5B8DEF;outline-offset:2px}
+  input[type=range]{accent-color:#5B8DEF}
+  .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8194B0}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .cols{display:flex;flex-wrap:wrap;gap:12px}
+  .col{flex:1 1 320px;min-width:300px}
+  svg{display:block;width:100%;height:auto}
+  @media (prefers-reduced-motion: reduce){*{transition:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+
+/* -------------------------------------------------- palette */
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B",
+  tile:"#1C2942", dim:"#10192B", onDark:"#0B1120", code:"#A7B6CE", outside:"#4A5A78",
+};
+const LABELS = "ABCDEFGHIJ".split("");
+const nm = (v) => LABELS[v];
+
+/* -------------------------------------------------- rng + graph */
+function mulberry32(a){ return function(){ a|=0; a=(a+0x6D2B79F5)|0; let t=Math.imul(a^(a>>>15),1|a); t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+
+function makeGraph(seed){
+  const rnd = mulberry32(seed);
+  const n = 6 + Math.floor(rnd()*3); // 6..8
+  const edges = [], seen = new Set();
+  const key = (a,b) => a<b ? a+"-"+b : b+"-"+a;
+  for (let i=1;i<n;i++){ const j=Math.floor(rnd()*i); seen.add(key(i,j)); edges.push([j,i,0]); }
+  const extra = 2 + Math.floor(rnd()*Math.max(1,n-4));
+  let tries=0;
+  while (edges.length < n-1+extra && tries++<300){
+    const a=Math.floor(rnd()*n), b=Math.floor(rnd()*n);
+    if (a===b || seen.has(key(a,b))) continue;
+    seen.add(key(a,b)); edges.push([a,b,0]);
+  }
+  const m = edges.length;
+  const pool = []; for (let w=1; w<=Math.max(9,m+4); w++) pool.push(w);
+  for (let i=pool.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [pool[i],pool[j]]=[pool[j],pool[i]]; }
+  edges.forEach((e,i)=>{ e[2]=pool[i]; });
+  const cx=210, cy=200, r=150;
+  const pos = Array.from({length:n},(_,i)=>{ const t=-Math.PI/2 + 2*Math.PI*i/n; return [Math.round(cx+r*Math.cos(t)), Math.round(cy+r*Math.sin(t))]; });
+  return { n, edges, pos, seed };
+}
+
+/* -------------------------------------------------- union-find + kruskal simulation */
+function find(parent, x){
+  const path=[]; let r=x;
+  while (parent[r]!==r){ path.push(r); r=parent[r]; }
+  for (const p of path) parent[p]=r; // path compression
+  return { root:r, path };
+}
+function rootOf(parent, x){ let r=x; while(parent[r]!==r) r=parent[r]; return r; } // non-mutating
+
+function simulate(g){
+  const n=g.n;
+  const parent=Array.from({length:n},(_,i)=>i);
+  const size=Array(n).fill(1);
+  const edges=g.edges.map(([u,v,w],id)=>({u,v,w,id}));
+  const sorted=[...edges].sort((a,b)=>a.w-b.w||a.id-b.id);
+  const status={}; edges.forEach(e=>status[e.id]="idle");
+  const steps=[]; let mstW=0, mstN=0;
+  const snap=(o)=>steps.push({ parent:parent.slice(), size:size.slice(), status:{...status}, mstW, mstN, ...o });
+
+  snap({ cur:null, si:-1, phase:"start",
+    msg:`Sort all ${edges.length} edges by weight, then scan lightest first. Add an edge only if it joins two different components; otherwise it would close a cycle.` });
+
+  for (let si=0; si<sorted.length; si++){
+    const e=sorted[si];
+    snap({ cur:e, si, phase:"consider",
+      msg:`Edge ${nm(e.u)}-${nm(e.v)} (${e.w}): find the root of ${nm(e.u)} and the root of ${nm(e.v)}.` });
+    const fu=find(parent,e.u), fv=find(parent,e.v);
+    const compressed = fu.path.length>1 || fv.path.length>1;
+    const cnote = compressed ? " Path compression flattened a find path." : "";
+    if (fu.root===fv.root){
+      status[e.id]="rejected";
+      snap({ cur:e, si, phase:"reject", compressed,
+        msg:`find(${nm(e.u)}) = find(${nm(e.v)}) = ${nm(fu.root)}. Same component already, so skip this edge (it would make a cycle).${cnote}` });
+    } else {
+      let big=fv.root, small=fu.root;
+      if (size[big] < size[small]){ big=fu.root; small=fv.root; }
+      parent[small]=big; size[big]+=size[small];
+      status[e.id]="mst"; mstW+=e.w; mstN++;
+      snap({ cur:e, si, phase:"accept", compressed, unionSmall:small, unionBig:big,
+        msg:`Roots ${nm(fu.root)} and ${nm(fv.root)} differ. Add ${nm(e.u)}-${nm(e.v)} to the MST. Union by size: ${nm(small)}'s tree hangs under the larger (or equal-sized) root ${nm(big)}.${cnote}` });
+      if (mstN===n-1){
+        snap({ cur:null, si, phase:"done",
+          msg:`MST complete. ${n-1} edges, total weight ${mstW}. Every node now shares one root.` });
+        return { steps, sorted, mstW };
+      }
+    }
+  }
+  snap({ cur:null, si:sorted.length-1, phase:"done", msg:`Done. MST weight ${mstW}, ${mstN} edges.` });
+  return { steps, sorted, mstW };
+}
+
+/* -------------------------------------------------- forest layout */
+function forestLayout(parent, n){
+  const kids=Array.from({length:n},()=>[]), roots=[];
+  for (let i=0;i<n;i++){ if(parent[i]===i) roots.push(i); else kids[parent[i]].push(i); }
+  kids.forEach(k=>k.sort((a,b)=>a-b)); roots.sort((a,b)=>a-b);
+  const XG=44, YG=52, PAD=22, RR=15;
+  const pos={}; let leaf=0, maxD=0;
+  function lay(node,d){
+    maxD=Math.max(maxD,d);
+    const ch=kids[node];
+    if(!ch.length){ const x=leaf*XG; pos[node]={x,y:d*YG}; leaf++; return x; }
+    const xs=ch.map(c=>lay(c,d+1)); const x=(xs[0]+xs[xs.length-1])/2; pos[node]={x,y:d*YG}; return x;
+  }
+  roots.forEach(r=>{ lay(r,0); leaf++; });
+  const xs=Object.values(pos).map(p=>p.x), ys=Object.values(pos).map(p=>p.y);
+  const minX=Math.min(...xs), maxX=Math.max(...xs), maxY=Math.max(...ys);
+  const offX=PAD+RR-minX, offY=PAD+RR;
+  for(const k in pos){ pos[k].x+=offX; pos[k].y+=offY; }
+  return { pos, width:(maxX-minX)+2*(PAD+RR), height:maxY+2*(PAD+RR), RR, roots };
+}
+
+/* -------------------------------------------------- dom helpers */
+const SVGNS="http://www.w3.org/2000/svg";
+function mk(ns,tag,props,kids){
+  const e=ns?document.createElementNS(ns,tag):document.createElement(tag);
+  props=props||{};
+  for(const k in props){ const v=props[k];
+    if(v===null||v===undefined||v===false) continue;
+    if(k==="style"&&typeof v==="object") Object.assign(e.style,v);
+    else if(k==="class") e.setAttribute("class",v);
+    else if(k.startsWith("on")&&typeof v==="function") e.addEventListener(k.slice(2).toLowerCase(),v);
+    else e.setAttribute(k,v);
+  }
+  (Array.isArray(kids)?kids:[kids]).forEach(function push(c){
+    if(c===null||c===undefined||c===false) return;
+    if(Array.isArray(c)){ c.forEach(push); return; }
+    e.appendChild(c.nodeType?c:document.createTextNode(String(c)));
+  });
+  return e;
+}
+const h=(t,p,k)=>mk(null,t,p,k);
+const S=(t,p,k)=>mk(SVGNS,t,p,k);
+
+/* -------------------------------------------------- state */
+const state = { seed: 20260810, g:null, steps:[], fW:0, fH:0, idx:0, playing:false, speed:4, mstW:0 };
+let playTimer=null;
+
+function regen(seed){
+  state.seed=seed;
+  state.g=makeGraph(seed);
+  const sim=simulate(state.g);
+  state.steps=sim.steps; state.mstW=sim.mstW;
+  let fW=0,fH=0;
+  for(const s of state.steps){ const L=forestLayout(s.parent, state.g.n); fW=Math.max(fW,L.width); fH=Math.max(fH,L.height); }
+  state.fW=Math.max(fW,120); state.fH=Math.max(fH,120);
+  state.idx=0; state.playing=false;
+}
+
+/* -------------------------------------------------- pseudocode (original paraphrase) */
+const PCODE = [
+  "sort every edge by weight, lightest first",
+  "for each edge u-v in that order:",
+  "    follow parent pointers from u, and from v, up to each one's root",
+  "    (flattening as you go: repoint each visited node straight at its root)",
+  "    if the two roots differ:",
+  "        keep u-v in the MST; merge the trees, smaller root under the larger",
+  "    if the roots match, skip u-v - it would close a cycle",
+  "every edge processed (or n-1 kept): the MST is complete",
+];
+const PHILITE = { start:[0], consider:[1,2], accept:[4,5], reject:[6], done:[7] };
+
+/* -------------------------------------------------- render */
+function render(){
+  if(playTimer){ clearTimeout(playTimer); playTimer=null; }
+  const g=state.g, n=g.n, steps=state.steps;
+  if(state.idx>steps.length-1) state.idx=steps.length-1;
+  if(state.idx<0) state.idx=0;
+  const st=steps[state.idx];
+  const atEnd=state.idx>=steps.length-1;
+
+  if(state.playing){
+    if(atEnd) state.playing=false;
+    else playTimer=setTimeout(()=>{ state.idx+=1; render(); }, 1050 - state.speed*90);
+  }
+
+  const curId = st.cur ? st.cur.id : -1;
+  const eStroke = (id) => {
+    if(st.cur && id===curId && st.phase==="consider") return {s:C.amber,w:4,dash:"none"};
+    const s=st.status[id];
+    if(s==="mst") return {s:C.green,w:5,dash:"none"};
+    if(s==="rejected") return {s:C.coral,w:2,dash:"3 5"};
+    if(st.cur && id===curId && st.phase==="reject") return {s:C.coral,w:3,dash:"3 5"};
+    if(st.cur && id===curId && st.phase==="accept") return {s:C.green,w:5,dash:"none"};
+    return {s:C.line,w:2,dash:"none"};
+  };
+  const endpointHot = (v) => st.cur && (st.cur.u===v || st.cur.v===v) && st.phase!=="done" && st.phase!=="start";
+
+  /* ---- graph svg (fixed viewBox) ---- */
+  const gEdges = g.edges.map(([u,v,w],id)=>{
+    const [x1,y1]=g.pos[u], [x2,y2]=g.pos[v];
+    const mx=(x1+x2)/2, my=(y1+y2)/2;
+    const es=eStroke(id);
+    return S("g",{key:id},[
+      S("line",{x1,y1,x2,y2,stroke:es.s,"stroke-width":es.w,"stroke-dasharray":es.dash,"stroke-linecap":"round"}),
+      S("rect",{x:mx-13,y:my-11,width:26,height:22,rx:4,fill:C.panel,stroke:es.s,"stroke-width":1.4}),
+      S("text",{x:mx,y:my+5,"text-anchor":"middle","font-size":13,"font-family":"ui-monospace,monospace","font-weight":600,fill:es.s===C.line?C.mute:es.s},String(w)),
+    ]);
+  });
+  const gNodes = g.pos.map(([x,y],v)=>{
+    const hot=endpointHot(v);
+    return S("g",{key:"n"+v},[
+      S("circle",{cx:x,cy:y,r:20,fill:C.tile,stroke:hot?C.amber:C.outside,"stroke-width":hot?4:2}),
+      S("text",{x,y:y+6,"text-anchor":"middle","font-size":16,"font-weight":700,"font-family":"ui-monospace,monospace",fill:C.ink},nm(v)),
+    ]);
+  });
+  const graphPanel = h("div",{class:"panel col",style:{padding:"10px"}},[
+    h("div",{class:"lbl",style:{margin:"2px 4px 6px"}},"Graph (green = in MST, coral dashed = rejected cycle, amber = current)"),
+    S("svg",{viewBox:"0 0 420 400"},[...gEdges,...gNodes]),
+  ]);
+
+  /* ---- union-find forest svg (fixed canvas) ---- */
+  const L=forestLayout(st.parent,n);
+  const fEdges=[], fNodes=[];
+  for(let v=0;v<n;v++){
+    const p=st.parent[v];
+    if(p!==v){ const a=L.pos[v], b=L.pos[p];
+      fEdges.push(S("line",{key:"fe"+v,x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:C.line,"stroke-width":2,"stroke-linecap":"round"})); }
+  }
+  for(let v=0;v<n;v++){
+    const pt=L.pos[v]; const isRoot=st.parent[v]===v; const hot=endpointHot(v);
+    fNodes.push(S("g",{key:"fn"+v},[
+      S("circle",{cx:pt.x,cy:pt.y,r:L.RR,fill:C.tile,stroke:hot?C.amber:isRoot?C.green:C.outside,"stroke-width":hot?3.5:isRoot?3:2}),
+      S("text",{x:pt.x,y:pt.y+5,"text-anchor":"middle","font-size":13,"font-weight":700,"font-family":"ui-monospace,monospace",fill:C.ink},nm(v)),
+      isRoot ? S("text",{x:pt.x,y:pt.y-L.RR-4,"text-anchor":"middle","font-size":10,"font-family":"ui-monospace,monospace",fill:C.green},"size "+st.size[v]) : null,
+    ]));
+  }
+  const forestPanel = h("div",{class:"panel col",style:{padding:"10px"}},[
+    h("div",{class:"lbl",style:{margin:"2px 4px 6px"}},"Union-Find forest (green ring = root / representative)"),
+    S("svg",{viewBox:"0 0 "+state.fW+" "+state.fH,preserveAspectRatio:"xMidYMin meet"},[...fEdges,...fNodes]),
+  ]);
+
+  /* ---- sorted edge list ---- */
+  const chips = state.steps.length ? state.g.edges.map(()=>null) : [];
+  const sorted = simulateSortedRef(); // stable sorted view
+  const listChips = sorted.map((e)=>{
+    const s=st.status[e.id];
+    const isCur = st.cur && st.cur.id===e.id;
+    let bg=C.tile, bd=C.line, col=C.code, deco="none", weight=500;
+    if(s==="mst"){ bg="rgba(45,212,160,0.14)"; bd=C.green; col=C.green; weight=700; }
+    else if(s==="rejected"){ bd=C.coral; col=C.mute; deco="line-through"; }
+    if(isCur && st.phase!=="done"){ bd=C.amber; col=C.amber; weight=700; }
+    return h("span",{class:"mono",style:{padding:"3px 8px",borderRadius:"5px",fontSize:"12.5px",
+      border:"1px solid "+bd,background:bg,color:col,textDecoration:deco,fontWeight:weight}},
+      nm(e.u)+"-"+nm(e.v)+" ("+e.w+")");
+  });
+  const listPanel = h("div",{class:"panel",style:{padding:"10px 12px",marginTop:"12px"}},[
+    h("div",{class:"lbl",style:{marginBottom:"6px"}},"Edges, sorted by weight (scanned left to right)"),
+    h("div",{style:{display:"flex",flexWrap:"wrap",gap:"6px"}},listChips),
+  ]);
+
+  /* ---- message (fixed height) ---- */
+  const message = h("div",{style:{fontSize:"14px",color:C.mute,minHeight:"46px",margin:"12px 2px"}},st.msg);
+
+  /* ---- controls ---- */
+  const controls = h("div",{class:"panel",style:{padding:"12px"}},[
+    h("div",{class:"row"},[
+      h("button",{class:"btn",style:{borderColor:C.blue,background:C.blue,color:C.onDark},
+        disabled:atEnd?"disabled":null,
+        onclick:()=>{ if(state.playing){state.playing=false;render();return;} if(atEnd)state.idx=0; state.playing=true; render(); }},
+        state.playing?"Pause":"Play"),
+      h("button",{class:"btn",disabled:atEnd?"disabled":null,
+        onclick:()=>{ state.playing=false; if(state.idx<state.steps.length-1) state.idx+=1; render(); }},"Step"),
+      h("button",{class:"btn",disabled:state.idx===0?"disabled":null,
+        onclick:()=>{ state.playing=false; state.idx-=1; render(); }},"Back"),
+      h("button",{class:"btn",onclick:()=>{ state.playing=false; state.idx=0; render(); }},"Reset"),
+      h("button",{class:"btn",onclick:()=>{ regen(Math.floor(Math.random()*1e9)); render(); }},"New graph"),
+      h("span",{class:"lbl",style:{marginLeft:"8px"}},"Speed"),
+      h("input",{type:"range",min:"1",max:"10",value:String(state.speed),style:{width:"110px"},
+        oninput:(e)=>{ state.speed=+e.target.value; }}),
+      h("span",{style:{fontSize:"12px",color:C.mute,marginLeft:"auto"}},"step "+(state.idx+1)+" / "+state.steps.length),
+    ]),
+  ]);
+
+  /* ---- pseudocode, synced to the current step ---- */
+  let phl = PHILITE[st.phase] || [];
+  if (st.compressed) phl = phl.concat(3); // flattening line lights up when a find path got compressed
+  const codePanel = h("div",{class:"panel",style:{padding:"12px",marginTop:"12px",overflowX:"auto"}},[
+    h("div",{class:"lbl",style:{marginBottom:"6px"}},"The algorithm in words"),
+    h("div",{}, PCODE.map((ln,k)=>{
+      const on = phl.includes(k);
+      return h("div",{class:"mono",style:{
+        whiteSpace:"pre", fontSize:"12.5px", lineHeight:"1.7", padding:"1px 8px",
+        borderLeft: on ? "3px solid "+C.amber : "3px solid transparent",
+        background: on ? "rgba(240,167,60,0.14)" : "transparent",
+        color: on ? C.ink : C.code, fontWeight: on ? 600 : 400 }}, ln);
+    })),
+  ]);
+
+  /* ---- stats ---- */
+  const tile=(label,val,col)=>h("div",{class:"panel",style:{padding:"12px 16px",flex:"1 1 150px"}},[
+    h("div",{class:"lbl"},label),
+    h("div",{class:"mono",style:{fontSize:"22px",fontWeight:600,marginTop:"2px",color:col||C.ink}},String(val)),
+  ]);
+  const stats = h("div",{style:{display:"flex",gap:"12px",flexWrap:"wrap",marginTop:"12px"}},[
+    tile("MST weight so far", st.mstW, C.green),
+    tile("Edges in MST", st.mstN+" / "+(n-1)),
+  ]);
+
+  /* ---- runtime note ---- */
+  const runtimeNote = h("div",{class:"panel",style:{padding:"10px 12px",marginTop:"12px"}},[
+    h("div",{class:"lbl",style:{marginBottom:"4px"}},"Runtime"),
+    h("p",{style:{fontSize:"13px",color:C.mute,margin:0}},
+      "Total O(m log n): sorting the edges dominates; each union-find operation is amortized O(α(n)) - far below O(log n)."),
+  ]);
+
+  /* ---- assemble ---- */
+  const header = h("div",{style:{marginBottom:"18px"}},[
+    h("h1",{},"Kruskal + Union-Find"),
+    h("p",{class:"sub"},"Scan edges lightest first and add each one only if its endpoints are in different components. Union-Find is the cycle test: follow parent pointers to a root, and same root means same component."),
+  ]);
+  const wrap = h("div",{class:"wrap"},[
+    header,
+    h("div",{class:"cols"},[graphPanel, forestPanel]),
+    listPanel, message, controls, codePanel, stats, runtimeNote,
+  ]);
+  const root=document.getElementById("root");
+  root.textContent=""; root.appendChild(wrap);
+}
+
+/* stable sorted-edge view for the list (same order as simulate) */
+function simulateSortedRef(){
+  return state.g.edges.map(([u,v,w],id)=>({u,v,w,id})).sort((a,b)=>a.w-b.w||a.id-b.id);
+}
+
+regen(state.seed);
+render();
+</script>
+</body>
+</html>

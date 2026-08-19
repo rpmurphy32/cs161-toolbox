@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Merge Sort · CS161</title>
+<style>
+  :root{
+    --boxFill:#16233F; --boxStroke:#5B8DEF; --boxTxt:#CFE0FF;
+    --leafFill:#151E31; --leafStroke:#2A3752; --leafTxt:#8194B0;
+    --mute:#8194B0; --ink:#E6EDF7;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0B1120}
+  #root{min-height:100vh}
+  body{color:#E6EDF7;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 56px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;color:#8194B0;margin:6px 0 0}
+  .panel{background:#151E31;border:1px solid #2A3752;border-radius:10px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;border:1px solid #2A3752;background:#151E31;color:#E6EDF7;cursor:pointer;transition:opacity .15s,border-color .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible,input:focus-visible{outline:2px solid #5B8DEF;outline-offset:2px}
+  input[type=range]{accent-color:#5B8DEF}
+  .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8194B0}
+  .dhead{font-size:16px;font-weight:600;margin:0 0 10px}
+  .svgwrap{overflow-x:auto}
+  .svgwrap svg{width:100%;height:auto;min-width:520px;display:block}
+  .caption{margin:14px 2px 2px;font-size:13.5px;color:#8194B0}
+  .caption b{color:#E6EDF7;font-weight:600}
+  @media (prefers-reduced-motion: reduce){*{transition:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------- palette */
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B",
+  fill:"#10192B", onDark:"#0B1120", code:"#A7B6CE", dimTxt:"#4A5A78",
+};
+
+/* ------------------------------------------------------------- core (verbatim logic) */
+const N = 8;
+const newArray = () => Array.from({ length: N }, () => Math.floor(Math.random() * 90) + 10);
+
+function genSteps(a) {
+  const s = [], arr = a.slice();
+  let auxTotal = 0, livePath = 0, peak = 0;
+  const snap = o => s.push({ arr: arr.slice(), auxTotal, live: livePath, peak, ...o });
+
+  function merge(lo, mid, hi) {
+    const L = arr.slice(lo, mid + 1), R = arr.slice(mid + 1, hi + 1);
+    auxTotal += L.length + R.length;
+    livePath += L.length + R.length;
+    peak = Math.max(peak, livePath);
+    snap({ L: L.slice(), R: R.slice(), i: 0, j: 0, k: lo, lo, hi, hl: null, pc: 1, msg: `merge([${lo}..${hi}]): allocate L (${L.length} cells) and R (${R.length} cells), copy values out` });
+    let i = 0, j = 0, k = lo;
+    while (i < L.length && j < R.length) {
+      snap({ L, R, i, j, k, lo, hi, hl: "cmp", pc: 2, msg: `Compare L[${i}]=${L[i]} vs R[${j}]=${R[j]}` });
+      if (L[i] <= R[j]) { arr[k] = L[i]; snap({ L, R, i: i + 1, j, k, lo, hi, hl: "wL", pc: 3, msg: `L wins → write ${L[i]} to arr[${k}], i++` }); i++; }
+      else { arr[k] = R[j]; snap({ L, R, i, j: j + 1, k, lo, hi, hl: "wR", pc: 3, msg: `R wins → write ${R[j]} to arr[${k}], j++` }); j++; }
+      k++;
+    }
+    while (i < L.length) { arr[k] = L[i]; snap({ L, R, i: i + 1, j, k, lo, hi, hl: "wL", pc: 4, msg: `R exhausted → copy L[${i}]=${L[i]} to arr[${k}]` }); i++; k++; }
+    while (j < R.length) { arr[k] = R[j]; snap({ L, R, i, j: j + 1, k, lo, hi, hl: "wR", pc: 4, msg: `L exhausted → copy R[${j}]=${R[j]} to arr[${k}]` }); j++; k++; }
+    livePath -= L.length + R.length;
+    snap({ lo, hi, pc: 5, msg: `merge([${lo}..${hi}]) done. L and R are freed` });
+  }
+  function sort(lo, hi) {
+    if (lo >= hi) return;
+    const mid = Math.floor((lo + hi) / 2);
+    snap({ lo, hi, pc: 0, msg: `mergesort([${lo}..${hi}]): split at ${mid}` });
+    sort(lo, mid); sort(mid + 1, hi); merge(lo, mid, hi);
+  }
+  sort(0, arr.length - 1);
+  snap({ done: true, pc: 6, msg: "Sorted. All auxiliary memory is freed" });
+  return s;
+}
+
+/* ------------------------------------------------------------- pseudocode (original paraphrase) */
+const PSEUDO = [
+  "split the range in half and sort each half first",
+  "to merge: copy the two sorted halves into helpers L and R",
+  "  look at the front of each half",
+  "  move the smaller front into place (left wins ties)",
+  "  when one half runs dry, pour the rest of the other in",
+  "this range is now one sorted run",
+  "done when the whole array is a single sorted range",
+];
+
+/* ------------------------------------------------------------- dom helper */
+function h(tag, props, kids) {
+  const e = document.createElement(tag);
+  props = props || {};
+  for (const k in props) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.setAttribute("class", v);
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+
+/* ------------------------------------------------------------- cell */
+function cell(v, bg, txt, consumed, w) {
+  return h("div", {
+    class: "mono",
+    style: {
+      width: (w || 44) + "px", height: "44px", display: "flex", alignItems: "center",
+      justifyContent: "center", borderRadius: "6px", border: "1px solid #2A3752", background: bg, color: txt,
+      fontSize: "15px", fontWeight: 600,
+      textDecoration: consumed ? "line-through" : "none",
+    },
+  }, String(v));
+}
+
+/* ------------------------------------------------------------- recursion-tree diagram (static) */
+const TREE_SVG = `<svg viewBox="0 0 680 340" role="img"
+     aria-label="Merge sort recursion tree for n=8. Each level's merge work totals 8, and there are 3 merge levels above the base case.">
+  <g>
+    <rect x="40" y="40" width="480" height="40" rx="6" fill="var(--boxFill)" stroke="var(--boxStroke)" stroke-width="1"/>
+    <text x="280" y="60" text-anchor="middle" dominant-baseline="central" fill="var(--boxTxt)" font-size="15" font-weight="600">n = 8</text>
+    <text x="545" y="60" dominant-baseline="central" fill="var(--mute)" font-size="13" class="mono">level cost = 8</text>
+  </g>
+  <g>
+    <rect x="40" y="104" width="232" height="40" rx="6" fill="var(--boxFill)" stroke="var(--boxStroke)" stroke-width="1"/>
+    <rect x="288" y="104" width="232" height="40" rx="6" fill="var(--boxFill)" stroke="var(--boxStroke)" stroke-width="1"/>
+    <text x="156" y="124" text-anchor="middle" dominant-baseline="central" fill="var(--boxTxt)" font-size="15" font-weight="600">4</text>
+    <text x="404" y="124" text-anchor="middle" dominant-baseline="central" fill="var(--boxTxt)" font-size="15" font-weight="600">4</text>
+    <text x="545" y="124" dominant-baseline="central" fill="var(--mute)" font-size="13" class="mono">4 + 4 = 8</text>
+  </g>
+  <g>
+    <rect x="40"  y="168" width="108" height="40" rx="6" fill="var(--boxFill)" stroke="var(--boxStroke)" stroke-width="1"/>
+    <rect x="164" y="168" width="108" height="40" rx="6" fill="var(--boxFill)" stroke="var(--boxStroke)" stroke-width="1"/>
+    <rect x="288" y="168" width="108" height="40" rx="6" fill="var(--boxFill)" stroke="var(--boxStroke)" stroke-width="1"/>
+    <rect x="412" y="168" width="108" height="40" rx="6" fill="var(--boxFill)" stroke="var(--boxStroke)" stroke-width="1"/>
+    <text x="94"  y="188" text-anchor="middle" dominant-baseline="central" fill="var(--boxTxt)" font-size="15" font-weight="600">2</text>
+    <text x="218" y="188" text-anchor="middle" dominant-baseline="central" fill="var(--boxTxt)" font-size="15" font-weight="600">2</text>
+    <text x="342" y="188" text-anchor="middle" dominant-baseline="central" fill="var(--boxTxt)" font-size="15" font-weight="600">2</text>
+    <text x="466" y="188" text-anchor="middle" dominant-baseline="central" fill="var(--boxTxt)" font-size="15" font-weight="600">2</text>
+    <text x="545" y="188" dominant-baseline="central" fill="var(--mute)" font-size="13" class="mono">2 × 4 = 8</text>
+  </g>
+  <g>
+    <rect x="40"  y="232" width="46" height="40" rx="6" fill="var(--leafFill)" stroke="var(--leafStroke)" stroke-width="1"/>
+    <rect x="102" y="232" width="46" height="40" rx="6" fill="var(--leafFill)" stroke="var(--leafStroke)" stroke-width="1"/>
+    <rect x="164" y="232" width="46" height="40" rx="6" fill="var(--leafFill)" stroke="var(--leafStroke)" stroke-width="1"/>
+    <rect x="226" y="232" width="46" height="40" rx="6" fill="var(--leafFill)" stroke="var(--leafStroke)" stroke-width="1"/>
+    <rect x="288" y="232" width="46" height="40" rx="6" fill="var(--leafFill)" stroke="var(--leafStroke)" stroke-width="1"/>
+    <rect x="350" y="232" width="46" height="40" rx="6" fill="var(--leafFill)" stroke="var(--leafStroke)" stroke-width="1"/>
+    <rect x="412" y="232" width="46" height="40" rx="6" fill="var(--leafFill)" stroke="var(--leafStroke)" stroke-width="1"/>
+    <rect x="474" y="232" width="46" height="40" rx="6" fill="var(--leafFill)" stroke="var(--leafStroke)" stroke-width="1"/>
+    <text x="63"  y="252" text-anchor="middle" dominant-baseline="central" fill="var(--leafTxt)" font-size="13">1</text>
+    <text x="125" y="252" text-anchor="middle" dominant-baseline="central" fill="var(--leafTxt)" font-size="13">1</text>
+    <text x="187" y="252" text-anchor="middle" dominant-baseline="central" fill="var(--leafTxt)" font-size="13">1</text>
+    <text x="249" y="252" text-anchor="middle" dominant-baseline="central" fill="var(--leafTxt)" font-size="13">1</text>
+    <text x="311" y="252" text-anchor="middle" dominant-baseline="central" fill="var(--leafTxt)" font-size="13">1</text>
+    <text x="373" y="252" text-anchor="middle" dominant-baseline="central" fill="var(--leafTxt)" font-size="13">1</text>
+    <text x="435" y="252" text-anchor="middle" dominant-baseline="central" fill="var(--leafTxt)" font-size="13">1</text>
+    <text x="497" y="252" text-anchor="middle" dominant-baseline="central" fill="var(--leafTxt)" font-size="13">1</text>
+    <text x="545" y="252" dominant-baseline="central" fill="var(--mute)" font-size="13" class="mono">base case, no merge</text>
+  </g>
+  <text x="40" y="308" fill="var(--ink)" font-size="15" class="mono">Total merge work = 8 per level × 3 merge levels = 24 = n log₂ n</text>
+</svg>`;
+
+const TREE_CAPTION = `Every level of the tree does the same total merge work: about <b>c·n</b> operations, because merging the subarrays at that level touches all n elements once. The tree has <b>log₂ n</b> levels before it bottoms out at single-element subarrays. Multiply the two: <b>c·n × log₂ n = Θ(n log n)</b>.`;
+
+function diagramPanel() {
+  const head = h("div", { class: "dhead" }, "Why merge sort is n log n");
+  const sw = h("div", { class: "svgwrap" });
+  sw.innerHTML = TREE_SVG;
+  const cap = h("p", { class: "caption" });
+  cap.innerHTML = TREE_CAPTION;
+  return h("div", { class: "panel", style: { padding: "16px", marginTop: "24px" } }, [head, sw, cap]);
+}
+
+/* ------------------------------------------------------------- state + render */
+const state = { base: newArray(), idx: 0, playing: false, speed: 4 };
+let steps = genSteps(state.base);
+let playTimer = null;
+
+function regen() { steps = genSteps(state.base); state.idx = 0; state.playing = false; }
+
+function render() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  if (state.idx > steps.length - 1) state.idx = steps.length - 1;
+  if (state.idx < 0) state.idx = 0;
+  const st = steps[state.idx];
+
+  if (state.playing) {
+    if (state.idx >= steps.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.idx += 1; render(); }, 1000 - state.speed * 88);
+  }
+
+  const inRange = i => st.lo !== undefined && i >= st.lo && i <= st.hi;
+
+  /* main array */
+  const mainRow = h("div", { style: { display: "flex", gap: "4px", marginBottom: "4px" } },
+    st.arr.map((v, i) => {
+      let bg = "#1C2942", txt = C.code;
+      if (st.done) { bg = C.green; txt = C.onDark; }
+      else if (st.lo !== undefined && !inRange(i)) { bg = C.fill; txt = C.dimTxt; }
+      if (st.k === i && (st.hl === "wL" || st.hl === "wR")) { bg = st.hl === "wL" ? C.blue : C.coral; txt = C.onDark; }
+      return h("div", {
+        class: "mono",
+        style: { flex: "1", height: "46px", display: "flex", alignItems: "center", justifyContent: "center",
+          borderRadius: "6px", border: "1px solid #2A3752", background: bg, color: txt, fontSize: "15px", fontWeight: 600 },
+      }, String(v));
+    }));
+
+  const kRow = h("div", { style: { display: "flex", gap: "4px", marginBottom: "18px", height: "16px" } },
+    st.arr.map((_, i) => h("div", { class: "mono", style: { flex: "1", textAlign: "center", fontSize: "12px", color: C.green, fontWeight: 600 } },
+      (st.k === i && st.L) ? "↑ k" : "")));
+
+  /* aux memory */
+  const auxRows = ["L", "R"].map(side => {
+    const auxArr = side === "L" ? st.L : st.R;
+    const ptr = side === "L" ? st.i : st.j;
+    const baseBg = side === "L" ? C.blue : C.coral;
+    const cells = auxArr
+      ? auxArr.map((v, x) => {
+          const consumed = x < ptr;
+          const active = x === ptr && st.hl === "cmp";
+          const bg = consumed ? C.fill : active ? C.amber : baseBg;
+          const txt = consumed ? C.dimTxt : C.onDark;
+          return cell(v, bg, txt, consumed, undefined);
+        })
+      : [h("span", { style: { fontSize: "13px", color: C.mute } }, "(none allocated)")];
+    return h("div", { style: { display: "flex", alignItems: "center", gap: "10px", minHeight: "44px", marginBottom: side === "L" ? "8px" : "0" } }, [
+      h("span", { class: "mono", style: { fontSize: "13px", width: "64px", color: C.mute } }, side + " (" + (side === "L" ? "i" : "j") + " →)"),
+      h("div", { style: { display: "flex", gap: "4px", flexWrap: "wrap" } }, cells),
+    ]);
+  });
+
+  const auxPanel = h("div", { class: "panel", style: { padding: "12px", marginBottom: "16px", minHeight: "120px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "Auxiliary memory (allocated by the current merge)"),
+    auxRows,
+  ]);
+
+  /* message */
+  const message = h("div", { style: { fontSize: "14px", color: C.mute, minHeight: "40px", marginBottom: "12px" } }, st.msg);
+
+  /* controls */
+  const atEnd = state.idx >= steps.length - 1;
+  const controls = h("div", { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "16px" } }, [
+    h("button", { class: "btn", style: { borderColor: C.blue, background: C.blue, color: C.onDark },
+      onclick: () => { if (state.playing) { state.playing = false; render(); return; } if (atEnd) state.idx = 0; state.playing = true; render(); } },
+      state.playing ? "Pause" : "Play"),
+    h("button", { class: "btn", disabled: atEnd ? "disabled" : null,
+      onclick: () => { state.playing = false; if (state.idx < steps.length - 1) state.idx += 1; render(); } }, "Step"),
+    h("button", { class: "btn", disabled: state.idx === 0 ? "disabled" : null,
+      onclick: () => { state.playing = false; state.idx -= 1; render(); } }, "Back"),
+    h("button", { class: "btn", onclick: () => { state.playing = false; state.idx = 0; render(); } }, "Reset"),
+    h("button", { class: "btn", onclick: () => { state.base = newArray(); regen(); render(); } }, "New array"),
+    h("span", { class: "lbl", style: { marginLeft: "8px" } }, "Speed"),
+    h("input", { type: "range", min: "1", max: "10", value: String(state.speed), style: { width: "120px" },
+      oninput: (e) => { state.speed = +e.target.value; } }),
+    h("span", { style: { fontSize: "12px", color: C.mute, marginLeft: "auto" } }, "step " + (state.idx + 1) + " / " + steps.length),
+  ]);
+
+  /* pseudocode panel */
+  const codePanel = h("div", { class: "panel", style: { padding: "12px 14px", marginBottom: "16px", overflowX: "auto" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "The algorithm in words"),
+    h("div", {}, PSEUDO.map((l, k) => {
+      const on = st.pc === k;
+      return h("div", {
+        class: "mono",
+        style: {
+          whiteSpace: "pre", fontSize: "12.5px", lineHeight: "1.6", padding: "1px 8px",
+          background: on ? "rgba(240,167,60,0.14)" : "transparent",
+          borderLeft: "3px solid " + (on ? C.amber : "transparent"),
+          color: on ? C.ink : C.code, fontWeight: on ? 600 : 400,
+        },
+      }, l);
+    })),
+  ]);
+
+  /* stats */
+  const statTile = (label, value) => h("div", { class: "panel", style: { padding: "12px 16px", flex: "1 1 160px" } }, [
+    h("div", { class: "lbl" }, label),
+    h("div", { class: "mono", style: { fontSize: "24px", fontWeight: 600, marginTop: "2px" } }, String(value)),
+  ]);
+  const stats = h("div", { style: { display: "flex", gap: "12px", flexWrap: "wrap" } }, [
+    statTile("Aux cells copied (total)", st.auxTotal),
+    statTile("Peak live aux memory", st.peak),
+  ]);
+
+  /* assemble */
+  const arrayPanel = h("div", { class: "panel", style: { padding: "12px", marginBottom: "16px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, "Main array (k = write pointer)"),
+    mainRow, kRow,
+  ]);
+
+  const header = h("div", { style: { marginBottom: "20px" } }, [
+    h("h1", {}, "Merge Sort"),
+    h("p", { class: "sub" }, "Step through the merges to watch the L and R helper arrays fill and drain with the i / j / k pointers, then see the recursion tree that explains the n log n running time. This page animates the common two-helper-array merge; the lecture and reference sheet merge into a single scratch array T and copy back - same comparisons, same Θ(n log n), different bookkeeping."),
+  ]);
+
+  const wrap = h("div", { class: "wrap" }, [header, arrayPanel, auxPanel, message, controls, codePanel, stats, diagramPanel()]);
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(wrap);
+}
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DFS &amp; Topological Sort · CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0B1120}
+  #root{min-height:100vh}
+  body{color:#E6EDF7;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:900px;margin:0 auto;padding:32px 20px 56px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;color:#8194B0;margin:6px 0 0}
+  .panel{background:#151E31;border:1px solid #2A3752;border-radius:10px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;border:1px solid #2A3752;background:#151E31;color:#E6EDF7;cursor:pointer;transition:opacity .15s,border-color .15s,background .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible,input:focus-visible{outline:2px solid #5B8DEF;outline-offset:2px}
+  input[type=range]{accent-color:#5B8DEF}
+  .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8194B0}
+  svg.graph{width:100%;height:auto;display:block}
+  .cols{display:flex;flex-direction:column;gap:12px}
+  @media(min-width:800px){.cols{flex-direction:row}.cols>.c1{width:58%}.cols>.c2{width:42%}}
+  .chip{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;padding:0 6px;border-radius:6px;border:1px solid #2A3752;background:#1C2942;color:#A7B6CE;font-weight:600}
+  pre{margin:0}
+  @media (prefers-reduced-motion: reduce){*{transition:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+
+/* palette */
+const C = { bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B", idle:"#1C2942",
+  onDark:"#0B1120", code:"#A7B6CE", dim:"#4A5A78", edge:"#6E82A6" };
+
+const LETTERS = "ABCDEFGH".split("");
+
+function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
+
+/* ---- graphs (both DAGs so topo always works) ---- */
+const PREREQ = { n:7, labels:LETTERS.slice(0,7),
+  edges:[[0,2],[0,3],[1,3],[2,4],[3,4],[3,5],[4,6],[5,6]], name:"Course prerequisites" };
+
+function buildAdj(n, edges){
+  const adj = Array.from({length:n},()=>[]);
+  for(const [a,b] of edges) if(a!==b && !adj[a].includes(b)) adj[a].push(b);
+  adj.forEach(l=>l.sort((x,y)=>x-y));  // alphabetical tie-break
+  return adj;
+}
+
+function genDAG(seed, n){
+  const rnd = mulberry32(seed);
+  const perm = [...Array(n).keys()];
+  for(let i=n-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[perm[i],perm[j]]=[perm[j],perm[i]];}
+  const seen = new Set(), edges = [];
+  const add=(a,b)=>{const k=a+"-"+b; if(!seen.has(k)){seen.add(k);edges.push([a,b]);}};
+  for(let i=1;i<n;i++) add(perm[Math.floor(rnd()*i)], perm[i]);        // each non-source gets an in-edge
+  for(let i=0;i<n;i++) for(let j=i+1;j<n;j++) if(rnd()<0.26) add(perm[i], perm[j]);
+  return { n, labels:LETTERS.slice(0,n), edges, name:"Random DAG · seed "+seed };
+}
+
+/* ---- layered layout (fixed canvas) ---- */
+const VW = 700, VH = 380, R = 20;
+function layout(n, adj){
+  const indeg = Array(n).fill(0); adj.forEach(l=>l.forEach(v=>indeg[v]++));
+  const level = Array(n).fill(0), rem = indeg.slice(), q = [];
+  for(let i=0;i<n;i++) if(indeg[i]===0) q.push(i);
+  while(q.length){ const u=q.shift(); for(const v of adj[u]){ level[v]=Math.max(level[v],level[u]+1); if(--rem[v]===0) q.push(v);} }
+  const maxL = Math.max(0,...level), groups = {};
+  for(let i=0;i<n;i++){ (groups[level[i]] = groups[level[i]]||[]).push(i); }
+  const padX=64, padY=52, pos=Array(n);
+  for(let L=0;L<=maxL;L++){
+    const g = groups[L]||[]; const x = maxL===0 ? VW/2 : padX + (VW-2*padX)*L/maxL;
+    g.forEach((node,i)=>{ const y = g.length===1 ? VH/2 : padY + (VH-2*padY)*i/(g.length-1); pos[node]={x,y}; });
+  }
+  return pos;
+}
+
+function arrow(a,b){
+  const dx=b.x-a.x, dy=b.y-a.y, d=Math.hypot(dx,dy)||1, ux=dx/d, uy=dy/d;
+  const sx=a.x+ux*R, sy=a.y+uy*R, ex=b.x-ux*(R+17), ey=b.y-uy*(R+17);
+  const ang=Math.atan2(ey-sy,ex-sx)*180/Math.PI;
+  return {sx,sy,ex,ey,ang};
+}
+
+/* ---- traces ---- */
+function dfsTrace(n, adj, labels){
+  const visited = Array(n).fill(false), pre=[], post=[], stack=[], tree=new Set(), steps=[];
+  const nm=v=>labels[v];
+  const snap=o=>steps.push({ visited:visited.slice(), pre:pre.slice(), post:post.slice(), stack:stack.slice(), tree:new Set(tree), cur:null, edge:null, ...o });
+  snap({ kind:"start", msg:"Ready. Run DFS from each unvisited node, alphabetical tie-break (this demo's convention - the course allows any order)." });
+  function visit(u, parent){
+    visited[u]=true; pre.push(u); stack.push(u);
+    if(parent!=null) tree.add(parent+"->"+u);
+    snap({ cur:u, kind:"enter", edge: parent!=null?[parent,u]:null, msg:`Enter ${nm(u)}. Mark visited, add ${nm(u)} to preorder.` });
+    for(const v of adj[u]){
+      snap({ cur:u, kind:"edge", edge:[u,v], msg:`Look at edge ${nm(u)} → ${nm(v)}.` });
+      if(!visited[v]) snap({ cur:u, kind:"recurse", edge:[u,v], msg:`${nm(v)} is unvisited, so recurse into it. This edge joins the recursion tree.` }), visit(v,u);
+      else snap({ cur:u, kind:"skip", edge:[u,v], msg:`${nm(v)} is already visited, so skip this edge.` });
+    }
+    post.push(u); stack.pop();
+    snap({ cur: stack.length?stack[stack.length-1]:null, kind:"finish", finished:u, msg:`Finish ${nm(u)}. Every edge out of it is done, so add ${nm(u)} to postorder.` });
+  }
+  for(let s=0;s<n;s++) if(!visited[s]){ snap({ kind:"outer", msg:`${nm(s)} is still unvisited. Start a new DFS here.` }); visit(s,null); }
+  snap({ kind:"done", done:true, msg:`Done. Preorder and postorder are complete. Reverse postorder of a DAG is a valid topological order.` });
+  return steps;
+}
+
+function topoTrace(n, adj, labels){
+  const indeg = Array(n).fill(0); adj.forEach(l=>l.forEach(v=>indeg[v]++));
+  const rem = indeg.slice(), removed = Array(n).fill(false), order=[], dead=new Set(), steps=[];
+  const nm=v=>labels[v];
+  let ready = []; for(let i=0;i<n;i++) if(rem[i]===0) ready.push(i); ready.sort((a,b)=>a-b);
+  const snap=o=>steps.push({ rem:rem.slice(), removed:removed.slice(), order:order.slice(), ready:ready.slice(), dead:new Set(dead), cur:null, edge:null, ...o });
+  snap({ kind:"start", msg:`Ready list = every node with in-degree 0: {${ready.map(nm).join(", ")||"none"}}.` });
+  while(ready.length){
+    const u = ready.shift(); removed[u]=true; order.push(u);
+    snap({ cur:u, kind:"pick", msg:`Pick ${nm(u)} from the ready list. Append it to the order, then delete ${nm(u)} and its out-edges.` });
+    for(const v of adj[u]){
+      dead.add(u+"->"+v); rem[v]--;
+      if(rem[v]===0){ ready.push(v); ready.sort((a,b)=>a-b);
+        snap({ cur:u, kind:"unlock", edge:[u,v], msg:`Delete ${nm(u)} → ${nm(v)}. ${nm(v)} now has in-degree 0, so add it to the ready list.` });
+      } else snap({ cur:u, kind:"dec", edge:[u,v], msg:`Delete ${nm(u)} → ${nm(v)}. ${nm(v)} still needs ${rem[v]} more prerequisite${rem[v]===1?"":"s"}.` });
+    }
+  }
+  snap({ kind:"done", done:true, msg: order.length===n
+    ? `Done. A valid topological order: ${order.map(nm).join(" ")}. Other valid orders may exist.`
+    : `The remaining nodes contain a cycle, so no topological order exists.` });
+  return steps;
+}
+
+/* ---- pseudocode ---- */
+const DFS_CODE = [
+  { t:"def visit(node):", i:0, k:["enter","edge","recurse","skip","finish"] },
+  { t:"if node.visited: return", i:1, k:["skip"] },
+  { t:"node.visited = true", i:1, k:["enter"] },
+  { t:"preorder.append(node)", i:1, k:["enter"] },
+  { t:"for v in node.out:", i:1, k:["edge","recurse"] },
+  { t:"visit(v)", i:2, k:["recurse"] },
+  { t:"postorder.append(node)", i:1, k:["finish"] },
+];
+const TOPO_CODE = [
+  { t:"ready = { nodes with in-degree 0 }", i:0, k:["start"] },
+  { t:"while ready is not empty:", i:0, k:["pick","unlock","dec"] },
+  { t:"u = ready.pop()", i:1, k:["pick"] },
+  { t:"order.append(u)", i:1, k:["pick"] },
+  { t:"for v in u.out:", i:1, k:["unlock","dec"] },
+  { t:"delete edge u -> v", i:2, k:["unlock","dec"] },
+  { t:"if in_degree[v] == 0:", i:2, k:["unlock","dec"] },
+  { t:"ready.add(v)", i:3, k:["unlock"] },
+];
+
+/* ---- dom helpers ---- */
+function h(tag, props, kids){
+  const e=document.createElement(tag); props=props||{};
+  for(const k in props){ const v=props[k]; if(v==null||v===false) continue;
+    if(k==="style"&&typeof v==="object") Object.assign(e.style,v);
+    else if(k==="class") e.setAttribute("class",v);
+    else if(k.startsWith("on")&&typeof v==="function") e.addEventListener(k.slice(2).toLowerCase(),v);
+    else e.setAttribute(k,v); }
+  (Array.isArray(kids)?kids:[kids]).forEach(function push(c){ if(c==null||c===false) return;
+    if(Array.isArray(c)){c.forEach(push);return;} e.appendChild(c.nodeType?c:document.createTextNode(String(c))); });
+  return e;
+}
+const SVGNS="http://www.w3.org/2000/svg";
+function S(tag, props, kids){
+  const e=document.createElementNS(SVGNS,tag); props=props||{};
+  for(const k in props){ const v=props[k]; if(v==null||v===false) continue; e.setAttribute(k,v); }
+  (Array.isArray(kids)?kids:[kids]).forEach(function push(c){ if(c==null||c===false) return;
+    if(Array.isArray(c)){c.forEach(push);return;} e.appendChild(c.nodeType?c:document.createTextNode(String(c))); });
+  return e;
+}
+
+/* ---- state ---- */
+const state = { graphKey:"prereq", seed:7, mode:"dfs", idx:0, playing:false, speed:5 };
+let G, ADJ, POS, DFS, TOPO, steps, playTimer=null;
+
+function build(){
+  G = state.graphKey==="prereq" ? PREREQ : genDAG(state.seed, 7);
+  ADJ = buildAdj(G.n, G.edges);
+  POS = layout(G.n, ADJ);
+  DFS = dfsTrace(G.n, ADJ, G.labels);
+  TOPO = topoTrace(G.n, ADJ, G.labels);
+  steps = state.mode==="dfs" ? DFS : TOPO;
+  state.idx = 0; state.playing = false;
+}
+build();
+
+function setMode(m){ state.mode=m; steps = m==="dfs"?DFS:TOPO; state.idx=0; state.playing=false; render(); }
+function setGraph(k){ state.graphKey=k; build(); render(); }
+function newGraph(){ state.graphKey="random"; state.seed=Math.floor(Math.random()*99999); build(); render(); }
+
+/* ---- render ---- */
+function render(){
+  if(playTimer){ clearTimeout(playTimer); playTimer=null; }
+  if(state.idx>steps.length-1) state.idx=steps.length-1;
+  if(state.idx<0) state.idx=0;
+  const st = steps[state.idx];
+  const dfs = state.mode==="dfs";
+
+  if(state.playing){
+    if(state.idx>=steps.length-1) state.playing=false;
+    else playTimer=setTimeout(()=>{ state.idx++; render(); }, 1180 - state.speed*100);
+  }
+
+  /* graph svg */
+  const edgeEls = G.edges.map(([a,b])=>{
+    const ar = arrow(POS[a], POS[b]);
+    let stroke = C.edge, w = 2, dash = null;
+    const key = a+"->"+b;
+    const active = st.edge && st.edge[0]===a && st.edge[1]===b;
+    if(dfs){ if(st.tree.has(key)){ stroke=C.green; w=2.4; } if(active){ stroke=C.amber; w=3; } }
+    else { if(st.dead.has(key)){ stroke=C.dim; dash="4 5"; } if(active){ stroke=C.amber; w=3; dash=null; } }
+    return S("g", {}, [
+      S("line", { x1:ar.sx, y1:ar.sy, x2:ar.ex, y2:ar.ey, stroke, "stroke-width":w, "stroke-dasharray":dash, "stroke-linecap":"round" }),
+      S("polygon", { points:"0,-8 18,0 0,8", fill:stroke, transform:`translate(${ar.ex},${ar.ey}) rotate(${ar.ang})` }),
+    ]);
+  });
+
+  const nodeEls = G.labels.map((lab,v)=>{
+    const p = POS[v];
+    let fill=C.idle, stroke=C.dim, sw=1.8, txt=C.mute, ring=false, under="";
+    if(dfs){
+      const pi=st.pre.indexOf(v), fi=st.post.indexOf(v);
+      if(pi>=0){ fill="#12233F"; stroke=C.blue; txt=C.ink; }
+      if(fi>=0){ fill="#123028"; stroke=C.green; txt=C.ink; }
+      if(st.stack.includes(v)) ring=true;
+      if(st.cur===v){ stroke=C.amber; sw=3.4; }
+      if(pi>=0) under = (pi+1) + (fi>=0 ? "/"+(fi+1) : "");
+    } else {
+      const rd = st.ready.includes(v);
+      if(st.removed[v]){ fill="#123028"; stroke=C.green; txt=C.ink; }
+      else if(rd){ stroke=C.blue; txt=C.ink; }
+      if(st.cur===v){ stroke=C.amber; sw=3.4; }
+      if(!st.removed[v]) under = "in " + st.rem[v];
+    }
+    return S("g", {}, [
+      ring ? S("circle", { cx:p.x, cy:p.y, r:R+5, fill:"none", stroke:C.blue, "stroke-width":1, opacity:0.4 }) : null,
+      S("circle", { cx:p.x, cy:p.y, r:R, fill, stroke, "stroke-width":sw }),
+      S("text", { x:p.x, y:p.y+5, "text-anchor":"middle", "font-size":15, "font-weight":700, "font-family":"ui-monospace,monospace", fill:txt }, lab),
+      under ? S("text", { x:p.x, y:p.y+R+15, "text-anchor":"middle", "font-size":11, "font-family":"ui-monospace,monospace", fill:C.mute }, under) : null,
+    ]);
+  });
+
+  const svg = S("svg", { viewBox:`0 0 ${VW} ${VH}`, class:"graph", style:{maxHeight:"420px"} }, [...edgeEls, ...nodeEls]);
+
+  const legend = h("div", { style:{ display:"flex", flexWrap:"wrap", gap:"10px 16px", fontSize:"12px", color:C.mute, marginTop:"6px" } },
+    (dfs ? [
+      [C.blue,"visited (on stack)"], [C.green,"finished"], [C.amber,"current"],
+    ] : [
+      [C.blue,"ready (in-degree 0)"], [C.amber,"just picked"], [C.green,"placed in order"],
+    ]).map(([col,t])=> h("span", { style:{display:"flex",alignItems:"center",gap:"6px"} }, [
+      h("span",{style:{width:"12px",height:"12px",borderRadius:"3px",background:col,display:"inline-block"}}), t ])));
+
+  const graphPanel = h("div", { class:"panel", style:{ padding:"10px" } }, [svg, legend]);
+
+  /* toolbar */
+  const modeBtn = (m,label)=> h("button", { class:"btn",
+    style: state.mode===m ? { borderColor:C.blue, background:C.blue, color:C.onDark } : {},
+    onclick:()=>setMode(m) }, label);
+  const graphBtn = (k,label)=> h("button", { class:"btn",
+    style: state.graphKey===k ? { borderColor:C.blue, background:C.blue, color:C.onDark } : {},
+    onclick:()=>setGraph(k) }, label);
+  const toolbar = h("div", { class:"panel", style:{ padding:"10px", marginBottom:"12px", display:"flex", flexWrap:"wrap", gap:"8px", alignItems:"center" } }, [
+    h("span",{class:"lbl"},"Mode"), modeBtn("dfs","DFS pre / post"), modeBtn("topo","Topological sort"),
+    h("span",{class:"lbl",style:{marginLeft:"8px"}},"Graph"), graphBtn("prereq","Prerequisites"), graphBtn("random","Random DAG"),
+    h("button",{class:"btn",onclick:newGraph},"New graph"),
+  ]);
+
+  /* message (fixed height) */
+  const message = h("div", { style:{ fontSize:"14px", color:C.mute, minHeight:"44px", margin:"12px 2px" } }, st.msg);
+
+  /* controls */
+  const atEnd = state.idx>=steps.length-1;
+  const controls = h("div", { style:{ display:"flex", flexWrap:"wrap", alignItems:"center", gap:"8px", marginBottom:"4px" } }, [
+    h("button",{class:"btn",style:{borderColor:C.blue,background:C.blue,color:C.onDark},disabled:atEnd?"disabled":null,
+      onclick:()=>{ if(state.playing){state.playing=false;render();return;} if(atEnd)state.idx=0; state.playing=true; render(); }}, state.playing?"Pause":"Play"),
+    h("button",{class:"btn",disabled:atEnd?"disabled":null,onclick:()=>{state.playing=false;if(state.idx<steps.length-1)state.idx++;render();}},"Step →"),
+    h("button",{class:"btn",disabled:state.idx===0?"disabled":null,onclick:()=>{state.playing=false;state.idx--;render();}},"← Back"),
+    h("button",{class:"btn",onclick:()=>{state.playing=false;state.idx=0;render();}},"Reset"),
+    h("span",{class:"lbl",style:{marginLeft:"8px"}},"Speed"),
+    h("input",{type:"range",min:"1",max:"10",value:String(state.speed),style:{width:"110px"},oninput:e=>{state.speed=+e.target.value;}}),
+    h("span",{style:{fontSize:"12px",color:C.mute,marginLeft:"auto"}},"step "+(state.idx+1)+" / "+steps.length),
+  ]);
+
+  /* side lists + pseudocode */
+  const chipRow = (arr, colorFor)=> arr.length===0
+    ? h("span",{style:{color:C.mute,fontSize:"13px"}},"empty")
+    : h("div",{style:{display:"flex",flexWrap:"wrap",gap:"5px"}}, arr.map((v,i)=>{
+        const c = colorFor?colorFor(v,i):null;
+        return h("span",{class:"chip mono",style: c?{borderColor:c,color:c}:{}}, G.labels[v]); }));
+
+  let lists;
+  if(dfs){
+    lists = h("div",{class:"panel",style:{padding:"12px"}},[
+      h("div",{class:"lbl",style:{marginBottom:"6px"}},"Preorder (entered)"),
+      h("div",{style:{minHeight:"32px"}}, chipRow(st.pre, ()=>C.blue)),
+      h("div",{class:"lbl",style:{margin:"12px 0 6px"}},"Postorder (finished)"),
+      h("div",{style:{minHeight:"32px"}}, chipRow(st.post, ()=>C.green)),
+      h("div",{class:"lbl",style:{margin:"12px 0 6px"}},"Call stack (top on the right)"),
+      h("div",{style:{minHeight:"32px"}}, chipRow(st.stack, ()=>C.amber)),
+    ]);
+  } else {
+    lists = h("div",{class:"panel",style:{padding:"12px"}},[
+      h("div",{class:"lbl",style:{marginBottom:"6px"}},"Ready list (in-degree 0)"),
+      h("div",{style:{minHeight:"32px"}}, chipRow(st.ready, ()=>C.blue)),
+      h("div",{class:"lbl",style:{margin:"12px 0 6px"}},"Topological order so far"),
+      h("div",{style:{minHeight:"32px"}}, chipRow(st.order, ()=>C.green)),
+    ]);
+  }
+
+  const code = dfs?DFS_CODE:TOPO_CODE;
+  const codePanel = h("div",{class:"panel",style:{padding:"12px",marginTop:"12px"}},[
+    h("div",{class:"lbl",style:{marginBottom:"8px"}},"Pseudocode"),
+    h("pre",{class:"mono",style:{fontSize:"12px",lineHeight:"1.7"}}, code.map(l=>{
+      const hot = l.k.includes(st.kind);
+      return h("div",{style:{paddingLeft:(4+l.i*16)+"px",borderRadius:"4px",padding:"0 4px 0 "+(4+l.i*16)+"px",
+        background:hot?"#1E2E27":"transparent", color:hot?C.green:C.code, fontWeight:hot?600:400}}, l.t);
+    })),
+  ]);
+
+  const rightCol = h("div",{class:"c2"},[lists, codePanel]);
+  const leftCol = h("div",{class:"c1"},[graphPanel, message, controls]);
+  const cols = h("div",{class:"cols"},[leftCol, rightCol]);
+
+  const header = h("div",{style:{marginBottom:"16px"}},[
+    h("h1",{},"DFS & Topological Sort"),
+    h("p",{class:"sub"},"Depth-first search recording preorder and postorder, and topological sort by the ready-list method. Both run in O(n + m), and other valid orderings may exist."),
+  ]);
+
+  const wrap = h("div",{class:"wrap"},[header, toolbar, cols]);
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(wrap);
+}
+
+window.addEventListener("keydown",(e)=>{
+  if(e.target && e.target.tagName==="INPUT") return;
+  if(e.key==="ArrowRight"){ e.preventDefault(); if(state.idx<steps.length-1){state.playing=false;state.idx++;render();} }
+  if(e.key==="ArrowLeft"){ e.preventDefault(); if(state.idx>0){state.playing=false;state.idx--;render();} }
+  if(e.key===" "){ e.preventDefault(); if(state.idx<steps.length-1){state.playing=!state.playing;render();} }
+});
+
+render();
+
+/* test hook (harmless in browser) */
+try { this.__api = { buildAdj, dfsTrace, topoTrace, genDAG, PREREQ, LETTERS }; } catch(e){}
+</script>
+</body>
+</html>

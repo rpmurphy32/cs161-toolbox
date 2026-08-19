@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AVL Insertion Stepper: CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0E1116}
+  body{-webkit-font-smoothing:antialiased}
+  input[type="number"],input[type="range"],input[type="checkbox"]{accent-color:#4FB8E8}
+  button:focus-visible,input:focus-visible{outline:2px solid #4FB8E8;outline-offset:2px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+"use strict";
+/* ---------- palette (matches the splay stepper) ---------- */
+const C = {
+  bg: "#0E1116",
+  panel: "#161B24",
+  panel2: "#1D2430",
+  line: "#2A3441",
+  ink: "#DDE3EC",
+  dim: "#7A8799",
+  edge: "#3A4553",
+  z: "#F4B740", // newly inserted node
+  a: "#F0776C", // unbalanced node
+  b: "#4FB8E8", // its child
+  x: "#B58BF5", // its grandchild (inside case)
+  ok: "#5FD08A",
+};
+
+/* ---------- tree core ---------- */
+let ID = 0;
+const nid = () => ++ID;
+const mk = (v) => ({ value: v, left: null, right: null, parent: null, id: nid() });
+
+/** CLASS CONVENTION: height = number of NODES on the longest path to a leaf.
+    empty = 0, single node = 1.  (+1 vs CLRS) */
+const h = (n) => (n ? n.h : 0);
+const reheight = (n) => {
+  if (n) n.h = 1 + Math.max(h(n.left), h(n.right));
+};
+const bal = (n) => (n ? h(n.left) - h(n.right) : 0);
+
+function rotate(tree, node) {
+  const p = node.parent;
+  if (!p) return;
+  const g = p.parent;
+  if (p.left === node) {
+    p.left = node.right;
+    if (node.right) node.right.parent = p;
+    node.right = p;
+  } else {
+    p.right = node.left;
+    if (node.left) node.left.parent = p;
+    node.left = p;
+  }
+  p.parent = node;
+  node.parent = g;
+  if (!g) tree.root = node;
+  else if (g.left === p) g.left = node;
+  else g.right = node;
+  reheight(p);
+  reheight(node);
+}
+
+function plainInsert(tree, v) {
+  const n = mk(v);
+  n.h = 1;
+  if (!tree.root) {
+    tree.root = n;
+    return n;
+  }
+  let c = tree.root;
+  for (;;) {
+    if (v < c.value) {
+      if (!c.left) {
+        c.left = n;
+        n.parent = c;
+        break;
+      }
+      c = c.left;
+    } else if (v > c.value) {
+      if (!c.right) {
+        c.right = n;
+        n.parent = c;
+        break;
+      }
+      c = c.right;
+    } else return null;
+  }
+  return n;
+}
+
+/** full AVL insert, no snapshots, used to build the starting tree */
+function avlInsert(tree, v) {
+  const n = plainInsert(tree, v);
+  if (!n) return;
+  let cur = n.parent;
+  while (cur) {
+    reheight(cur);
+    const b = bal(cur);
+    if (Math.abs(b) > 1) {
+      if (b > 1) {
+        if (bal(cur.left) < 0) rotate(tree, cur.left.right);
+        rotate(tree, cur.left);
+      } else {
+        if (bal(cur.right) > 0) rotate(tree, cur.right.left);
+        rotate(tree, cur.right);
+      }
+      break;
+    }
+    cur = cur.parent;
+  }
+  let up = tree.root;
+  (function fix(x) {
+    if (!x) return;
+    fix(x.left);
+    fix(x.right);
+    reheight(x);
+  })(up);
+}
+
+const ser = (n) =>
+  n ? { value: n.value, id: n.id, h: n.h, bal: bal(n), left: ser(n.left), right: ser(n.right) } : null;
+
+/* ---------- step builder ---------- */
+function buildSteps(startValues, insertValue) {
+  const tree = { root: null };
+  startValues.forEach((v) => avlInsert(tree, v));
+
+  const steps = [];
+  const push = (title, detail, hl, caseName, kind) =>
+    steps.push({ tree: ser(tree.root), title, detail, hl: hl || {}, caseName: caseName || null, kind: kind || null });
+
+  push("Starting AVL tree", "Every node satisfies |height(left) − height(right)| ≤ 1. Heights shown in grey; balance factor in brackets.", {}, null, "start");
+
+  const n = plainInsert(tree, insertValue);
+  if (!n) {
+    push(`${insertValue} is already in the tree`, "No duplicates in this class, so insertion stops here.", {}, null, "insert");
+    return steps;
+  }
+
+  push(
+    `Inserted ${insertValue} as a leaf`,
+    `Ordinary BST insertion. Descend and place. No balancing yet. Now walk back up the ancestors, updating heights.`,
+    { z: n.id },
+    null,
+    "insert"
+  );
+
+  /* walk up */
+  let cur = n.parent;
+  let fixed = false;
+  while (cur) {
+    const oldH = cur.h;
+    reheight(cur);
+    const b = bal(cur);
+
+    if (Math.abs(b) <= 1) {
+      push(
+        `${cur.value}: height ${oldH} → ${cur.h}, balance ${b >= 0 ? "+" : ""}${b}`,
+        `Within ±1, so no rotation here. Keep walking up.`,
+        { z: n.id, a: cur.id },
+        null,
+        "walkup"
+      );
+      cur = cur.parent;
+      continue;
+    }
+
+    /* unbalanced: classify */
+    const leftHeavy = b > 1;
+    const B = leftHeavy ? cur.left : cur.right;
+    const insertedOuter = leftHeavy ? insertValue < B.value : insertValue > B.value;
+
+    if (insertedOuter) {
+      const dir = leftHeavy ? "left-of-left" : "right-of-right";
+      push(
+        `${cur.value} is UNBALANCED: ${h(cur.left)} vs ${h(cur.right)}`,
+        `${insertValue} went ${dir} of ${cur.value}. Straight path → OUTSIDE case → ONE rotation, at ${cur.value} itself.`,
+        { z: n.id, a: cur.id, b: B.id },
+        "OUTSIDE (one rotation - the sheet's Case 1)",
+        "imbalOut"
+      );
+      rotate(tree, B);
+      push(
+        `Rotated at ${cur.value}: ${B.value} moved up`,
+        `Subtree is balanced again, and back to the height it had BEFORE the insertion. So no ancestor above can be unbalanced. Stop here.`,
+        { z: n.id, a: B.id },
+        "OUTSIDE (one rotation - the sheet's Case 1)",
+        "rotate1"
+      );
+    } else {
+      const dir = leftHeavy ? "right-of-left" : "left-of-right";
+      const X = leftHeavy ? B.right : B.left;
+      push(
+        `${cur.value} is UNBALANCED: ${h(cur.left)} vs ${h(cur.right)}`,
+        `${insertValue} went ${dir} of ${cur.value}. Bent path → INSIDE case → TWO rotations. Rotate at the CHILD (${B.value}) first, then at ${cur.value}.`,
+        { z: n.id, a: cur.id, b: B.id, x: X.id },
+        "INSIDE (two rotations - the sheet's Case 2)",
+        "imbalIn"
+      );
+      rotate(tree, X);
+      push(
+        `1 of 2: rotated at child ${B.value}`,
+        `${X.value} moved up past ${B.value}. The bent path is now straight, which is what makes the second rotation work.`,
+        { z: n.id, a: cur.id, b: B.id, x: X.id },
+        "INSIDE (two rotations - the sheet's Case 2)",
+        "rotate2a"
+      );
+      rotate(tree, X);
+      push(
+        `2 of 2: rotated at ${cur.value}`,
+        `${X.value} is now on top with ${cur.value} and ${B.value} as its children. Subtree is back to its pre-insertion height. Stop.`,
+        { z: n.id, a: X.id },
+        "INSIDE (two rotations - the sheet's Case 2)",
+        "rotate2b"
+      );
+    }
+    fixed = true;
+    break;
+  }
+
+  if (!fixed) {
+    push("No rotation needed", `Every ancestor stayed within ±1. Inserting ${insertValue} did not break the AVL property.`, { z: n.id }, null, "norot");
+  }
+
+  /* final heights */
+  (function fix(x) {
+    if (!x) return;
+    fix(x.left);
+    fix(x.right);
+    reheight(x);
+  })(tree.root);
+  push("Done", `Valid AVL tree. At most 2 rotations were performed - never Θ(log n) of them. Insertion is O(log n) because of the descent and the ancestor walk.`, {}, null, "done");
+
+  return steps;
+}
+
+/* ---------- pseudocode (original paraphrase; step kinds map to lines) ---------- */
+const PC = [
+  "avl-insert(v):",
+  "  descend and hang v as an ordinary BST leaf (a new leaf has height 1)",
+  "  walk from the leaf back up toward the root, refreshing each ancestor's height",
+  "  at the first node whose children's heights differ by more than 1:",
+  "    v landed OUTSIDE (straight path)? one rotation at that node    [Case 1]",
+  "    v landed INSIDE (bent path)? rotate the child, then the node   [Case 2]",
+  "  the subtree is back to its pre-insert height, so stop the walk",
+  "  done: at most two rotations, ever",
+];
+const PC_HILITE = {
+  start: [0],
+  insert: [1],
+  walkup: [2],
+  imbalOut: [3, 4],
+  rotate1: [4, 6],
+  imbalIn: [3, 5],
+  rotate2a: [5],
+  rotate2b: [5, 6],
+  norot: [2],
+  done: [7],
+};
+
+/* ---------- layout ---------- */
+function layout(root) {
+  const pos = {};
+  let i = 0,
+    maxD = 0;
+  (function walk(n, d) {
+    if (!n) return;
+    walk(n.left, d + 1);
+    pos[n.id] = { x: i++, y: d, value: n.value, h: n.h, bal: n.bal };
+    maxD = Math.max(maxD, d);
+    walk(n.right, d + 1);
+  })(root, 0);
+  const edges = [];
+  (function walk(n) {
+    if (!n) return;
+    if (n.left) {
+      edges.push([n.id, n.left.id]);
+      walk(n.left);
+    }
+    if (n.right) {
+      edges.push([n.id, n.right.id]);
+      walk(n.right);
+    }
+  })(root);
+  return { pos, edges, w: i, d: maxD + 1 };
+}
+
+/* Fixed canvas size across a whole trace, so the layout never jumps while
+   stepping through one tree. Recomputed only when a new tree is built. */
+function canvasSize(steps) {
+  const GX = 58, GY = 70;
+  let maxW = 1, maxD = 1;
+  steps.forEach((s) => {
+    const L = layout(s.tree);
+    if (L.w > maxW) maxW = L.w;
+    if (L.d > maxD) maxD = L.d;
+  });
+  return { W: Math.max(maxW * GX + 40, 160), H: maxD * GY + 10 };
+}
+
+/* ---------- dom helpers (named el/sv to avoid colliding with tree `mk`/`h`) ---------- */
+const SVGNS = "http://www.w3.org/2000/svg";
+const UNITLESS = new Set(["fontWeight", "lineHeight", "opacity", "zIndex", "flexGrow", "flexShrink", "order"]);
+function applyStyle(e, s) {
+  for (const k in s) {
+    let v = s[k];
+    if (typeof v === "number" && !UNITLESS.has(k)) v = v + "px";
+    e.style[k] = v;
+  }
+}
+function dom(ns, tag, props, kids) {
+  const e = ns ? document.createElementNS(ns, tag) : document.createElement(tag);
+  props = props || {};
+  for (const k in props) {
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") applyStyle(e, v);
+    else if (k === "class") e.setAttribute("class", v);
+    else if (k === "checked" || k === "value") e[k] = v;
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+const el = (tag, props, kids) => dom(null, tag, props, kids);
+const sv = (tag, props, kids) => dom(SVGNS, tag, props, kids);
+
+/* ---------- view pieces ---------- */
+function TreeView(root, hl, showHeights, fixedW, fixedH) {
+  if (!root) return el("div", { style: { color: C.dim, padding: 30 } }, "empty");
+  const L = layout(root);
+
+  const GX = 58, GY = 70, R = 18;
+  const thisW = Math.max(L.w * GX + 40, 160);
+  const W = fixedW || thisW;
+  const H = fixedH || (L.d * GY + 10);
+  const ox = (W - thisW) / 2; // center this step's tree within the fixed canvas
+  const px = (id) => L.pos[id].x * GX + GX / 2 + 20 + ox;
+  const py = (id) => L.pos[id].y * GY + GY / 2;
+
+  const colorOf = (id) =>
+    hl.a === id ? C.a : hl.x === id ? C.x : hl.b === id ? C.b : hl.z === id ? C.z : null;
+
+  const kids = [];
+  L.edges.forEach(([a, b]) => {
+    kids.push(sv("line", { x1: px(a), y1: py(a), x2: px(b), y2: py(b), stroke: C.edge, "stroke-width": 1.5 }));
+  });
+  Object.keys(L.pos).forEach((idStr) => {
+    const id = Number(idStr);
+    const n = L.pos[id];
+    const c = colorOf(id);
+    const cx = px(id), cy = py(id);
+    const g = [
+      sv("circle", { cx, cy, r: R, fill: c || C.panel2, stroke: c || C.line, "stroke-width": c ? 2.5 : 1.5 }),
+      sv("text", {
+        x: cx, y: cy + 4, "text-anchor": "middle", "font-size": 13, "font-weight": "600",
+        fill: c ? "#0E1116" : C.ink, "font-family": "ui-monospace, SFMono-Regular, Menlo, monospace",
+      }, n.value),
+    ];
+    if (showHeights) {
+      g.push(sv("text", {
+        x: cx + R + 4, y: cy - 4, "font-size": 10,
+        fill: Math.abs(n.bal) > 1 ? C.a : C.dim, "font-family": "ui-monospace, monospace",
+      }, "h" + n.h));
+      g.push(sv("text", {
+        x: cx + R + 4, y: cy + 8, "font-size": 10,
+        fill: Math.abs(n.bal) > 1 ? C.a : C.dim, "font-family": "ui-monospace, monospace",
+      }, "[" + (n.bal >= 0 ? "+" : "") + n.bal + "]"));
+    }
+    kids.push(sv("g", {}, g));
+  });
+
+  return sv("svg", { width: W, height: H, style: { overflow: "visible", maxWidth: "100%" } }, kids);
+}
+
+function Btn(children, onClick, disabled, primary) {
+  return el("button", {
+    onClick,
+    disabled: disabled ? "disabled" : null,
+    style: {
+      background: disabled ? C.panel2 : primary ? C.ink : C.panel2,
+      color: disabled ? C.dim : primary ? C.bg : C.ink,
+      border: `1px solid ${disabled ? C.line : primary ? C.ink : C.line}`,
+      borderRadius: 6,
+      padding: "8px 14px",
+      fontSize: 13,
+      fontWeight: 600,
+      cursor: disabled ? "not-allowed" : "pointer",
+      fontFamily: "inherit",
+    },
+  }, children);
+}
+
+function Legend(c, t) {
+  return el("span", { style: { display: "inline-flex", alignItems: "center", gap: 5 } }, [
+    el("span", { style: { width: 9, height: 9, borderRadius: 9, background: c, display: "inline-block" } }),
+    t,
+  ]);
+}
+
+/* ---------- main ---------- */
+const state = {
+  size: 7,
+  values: [50, 30, 70, 20, 40, 60, 80],
+  target: 35,
+  steps: [],
+  i: 0,
+  playing: false,
+  speed: 4,
+  showH: true,
+  viewW: 160,
+  viewH: 220,
+};
+let playTimer = null;
+
+function randomTree(n) {
+  const pool = [];
+  while (pool.length < n) {
+    const v = Math.floor(Math.random() * 90) + 10;
+    if (!pool.includes(v)) pool.push(v);
+  }
+  state.values = pool;
+  let t;
+  do {
+    t = Math.floor(Math.random() * 90) + 10;
+  } while (pool.includes(t));
+  state.target = t;
+  state.steps = buildSteps(pool, t);
+  const cv = canvasSize(state.steps);
+  state.viewW = cv.W;
+  state.viewH = cv.H;
+  state.i = 0;
+  state.playing = false;
+  render();
+}
+
+function buildTrace() {
+  state.steps = buildSteps(state.values, Number(state.target));
+  const cv = canvasSize(state.steps);
+  state.viewW = cv.W;
+  state.viewH = cv.H;
+  state.i = 0;
+  state.playing = false;
+}
+
+function run() {
+  buildTrace();
+  state.playing = true;
+  render();
+}
+
+function setI(v) {
+  state.playing = false;
+  state.i = Math.max(0, Math.min(v, state.steps.length - 1));
+  render();
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight") setI(state.i + 1);
+  if (e.key === "ArrowLeft") setI(state.i - 1);
+});
+
+function render() {
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  const steps = state.steps;
+  const i = state.i;
+  const step = steps[i];
+
+  if (state.playing) {
+    if (i >= steps.length - 1) state.playing = false;
+    else playTimer = setTimeout(() => { state.i += 1; render(); }, 1000 - state.speed * 88);
+  }
+  const tint = step && step.caseName ? (step.caseName.startsWith("OUTSIDE") ? C.ok : C.x) : null;
+
+  /* header */
+  const header = el("div", { style: { marginBottom: 16 } }, [
+    el("div", { style: { fontSize: 19, fontWeight: 700, letterSpacing: -0.2 } }, "AVL insertion stepper"),
+    el("div", { style: { color: C.dim, fontSize: 13, marginTop: 3 } },
+      "Height = number of nodes on the longest path to a leaf (empty = 0). Arrow keys step."),
+  ]);
+
+  /* controls */
+  const sizeVal = el("span", { style: { fontFamily: "ui-monospace, monospace", color: C.ink, width: 16 } }, String(state.size));
+  const controls = el("div", {
+    style: {
+      background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: 14,
+      display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14,
+    },
+  }, [
+    Btn("New random tree", () => randomTree(state.size)),
+    el("label", { style: { fontSize: 12, color: C.dim, display: "flex", alignItems: "center", gap: 7 } }, [
+      "nodes",
+      el("input", {
+        type: "range", min: "3", max: "14", value: state.size, style: { width: 90 },
+        oninput: (e) => { state.size = Number(e.target.value); sizeVal.textContent = String(state.size); },
+      }),
+      sizeVal,
+    ]),
+    el("div", { style: { width: 1, height: 26, background: C.line } }),
+    el("span", { style: { fontSize: 13, color: C.dim } }, "insert"),
+    el("input", {
+      type: "number", value: state.target,
+      oninput: (e) => { state.target = e.target.value; },
+      onkeydown: (e) => { if (e.key === "Enter") run(); },
+      style: {
+        background: C.panel2, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 6,
+        padding: "8px 10px", width: 74, fontSize: 13, fontFamily: "ui-monospace, monospace",
+      },
+    }),
+    Btn("Run", run, false, true),
+    el("label", { style: { fontSize: 12, color: C.dim, display: "flex", alignItems: "center", gap: 6, marginLeft: 4 } }, [
+      el("input", { type: "checkbox", checked: state.showH, onchange: (e) => { state.showH = e.target.checked; render(); } }),
+      "show h / balance",
+    ]),
+    el("div", { style: { marginLeft: "auto", fontSize: 11, color: C.dim, fontFamily: "ui-monospace, monospace" } },
+      state.values.slice().sort((a, b) => a - b).join(" ")),
+  ]);
+
+  /* case banner */
+  const caseBar = el("div", {
+    style: {
+      background: tint ? `${tint}1A` : C.panel, border: `1px solid ${tint || C.line}`, borderRadius: 10,
+      padding: "12px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 14,
+      flexWrap: "wrap", minHeight: 58,
+    },
+  }, step && step.caseName ? [
+    el("div", { style: { fontFamily: "ui-monospace, monospace", fontWeight: 700, fontSize: 15, letterSpacing: 1, color: tint } }, step.caseName),
+    el("div", { style: { width: 1, height: 22, background: C.line } }),
+    el("div", { style: { fontSize: 13, fontWeight: 600 } },
+      step.caseName.startsWith("OUTSIDE") ? "rotate once, at the unbalanced node" : "rotate at the child first, then at the unbalanced node"),
+  ] : el("div", { style: { fontSize: 13, color: C.dim, fontFamily: "ui-monospace, monospace" } }, "(walking up, no rotation yet)"));
+
+  /* tree */
+  const treeBox = el("div", {
+    style: {
+      background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: "22px 14px",
+      marginBottom: 14, display: "flex", justifyContent: "center", overflowX: "auto",
+    },
+  }, step ? TreeView(step.tree, step.hl, state.showH, state.viewW, state.viewH) : null);
+
+  /* stepper controls + description */
+  const stepCard = el("div", { style: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: 14 } }, [
+    el("div", { style: { display: "flex", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" } }, [
+      Btn(state.playing ? "Pause" : "Play", () => {
+        if (state.playing) { state.playing = false; render(); return; }
+        if (!state.steps.length) return;
+        if (state.i >= state.steps.length - 1) state.i = 0;
+        state.playing = true;
+        render();
+      }, !steps.length, true),
+      Btn("← Prev", () => setI(state.i - 1), i === 0),
+      Btn("Next →", () => setI(state.i + 1), i >= steps.length - 1, true),
+      el("div", { style: { fontFamily: "ui-monospace, monospace", fontSize: 12, color: C.dim } },
+        "step " + (steps.length ? i + 1 : 0) + " / " + steps.length),
+      el("label", { style: { fontSize: 12, color: C.dim, display: "flex", alignItems: "center", gap: 6 } }, [
+        "speed",
+        el("input", {
+          type: "range", min: "1", max: "10", value: state.speed, style: { width: 90 },
+          oninput: (e) => { state.speed = Number(e.target.value); },
+        }),
+      ]),
+      el("div", { style: { marginLeft: "auto", display: "flex", gap: 12, fontSize: 11, color: C.dim, flexWrap: "wrap" } }, [
+        Legend(C.z, "inserted"), Legend(C.a, "unbalanced"), Legend(C.b, "child"), Legend(C.x, "grandchild"),
+      ]),
+    ]),
+    step ? el("div", { style: { minHeight: 78 } }, [
+      el("div", { style: { fontWeight: 700, fontSize: 14, marginBottom: 4 } }, step.title),
+      el("div", { style: { fontSize: 13, color: C.dim, lineHeight: 1.55 } }, step.detail),
+    ]) : null,
+  ]);
+
+  /* pseudocode card (step-synced) */
+  const pcActive = (step && step.kind && PC_HILITE[step.kind]) || [];
+  const codeCard = el("div", {
+    style: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, padding: 14, marginTop: 14 },
+  }, [
+    el("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", color: C.dim, marginBottom: 8 } },
+      "The algorithm in words"),
+    el("div", { style: { overflowX: "auto" } }, PC.map((l, k) => el("div", {
+      style: {
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontSize: 12.5,
+        whiteSpace: "pre",
+        lineHeight: 1.8,
+        padding: "1px 8px",
+        background: pcActive.includes(k) ? "rgba(240,167,60,0.14)" : "transparent",
+        borderLeft: `3px solid ${pcActive.includes(k) ? "#F0A73C" : "transparent"}`,
+        color: pcActive.includes(k) ? C.ink : C.dim,
+        fontWeight: pcActive.includes(k) ? 600 : 400,
+      },
+    }, l))),
+  ]);
+
+  /* footer explainer */
+  const explain = el("div", { style: { marginTop: 14, fontSize: 12, color: C.dim, lineHeight: 1.7 } }, [
+    el("strong", { style: { color: C.ink } }, "Outside"),
+    " (right-of-right or left-of-left of the unbalanced node) → one rotation, at that node. This is the reference sheet's Case 1.",
+    el("br"),
+    el("strong", { style: { color: C.ink } }, "Inside"),
+    " (left-of-right or right-of-left) → two rotations: child first, then the unbalanced node. This is the reference sheet's Case 2.",
+    el("br"),
+    el("strong", { style: { color: C.ink } }, "Always ≤ 2 rotations."),
+    " Fixing the first unbalanced ancestor restores the subtree to its pre-insertion height, so nothing above it can break.",
+  ]);
+
+  const inner = el("div", { style: { maxWidth: 940, margin: "0 auto" } }, [header, controls, caseBar, treeBox, stepCard, codeCard, explain]);
+  const page = el("div", {
+    style: {
+      background: C.bg, color: C.ink, minHeight: "100vh", padding: "20px 18px 32px",
+      fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+    },
+  }, inner);
+
+  const rootEl = document.getElementById("root");
+  rootEl.textContent = "";
+  rootEl.appendChild(page);
+}
+
+buildTrace();
+render();
+</script>
+</body>
+</html>

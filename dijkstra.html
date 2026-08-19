@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dijkstra's · CS161</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0B1120}
+  #root{min-height:100vh}
+  body{color:#E6EDF7;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.5}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:900px;margin:0 auto;padding:32px 20px 56px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0}
+  .sub{font-size:13px;color:#8194B0;margin:6px 0 0}
+  .panel{background:#151E31;border:1px solid #2A3752;border-radius:10px}
+  .btn{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;border:1px solid #2A3752;background:#151E31;color:#E6EDF7;cursor:pointer;transition:opacity .15s,border-color .15s,background .15s}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:focus-visible,input:focus-visible{outline:2px solid #5B8DEF;outline-offset:2px}
+  input[type=range]{accent-color:#5B8DEF}
+  .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8194B0}
+  svg.graph{width:100%;height:auto;max-height:400px;display:block}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{font-weight:500;color:#8194B0;text-align:right;padding:2px 6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  th.l,td.l{text-align:left}
+  td{padding:3px 6px;text-align:right}
+  .grid2{display:flex;flex-direction:column;gap:12px}
+  @media(min-width:680px){.grid2{flex-direction:row}.grid2>*{flex:1}}
+  @media (prefers-reduced-motion: reduce){*{transition:none}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+
+/* ------------------------------------------------------------- palette */
+const C = {
+  bg:"#0B1120", panel:"#151E31", ink:"#E6EDF7", mute:"#8194B0", line:"#2A3752",
+  blue:"#5B8DEF", green:"#2DD4A0", amber:"#F0A73C", coral:"#FF6B6B",
+  tile:"#1C2942", fill:"#10192B", onDark:"#0B1120", code:"#A7B6CE", edge:"#6E82A6", outside:"#4A5A78",
+};
+const LABELS = "ABCDEFGHIJ".split("");
+const nm = (i) => LABELS[i];
+const fmt = (x) => (x === Infinity ? "∞" : String(x));
+
+/* ------------------------------------------------------------- rng */
+function mulberry32(a){ return function(){ a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296; }; }
+
+/* ------------------------------------------------------------- graphs */
+const VW = 520, VH = 360, R = 20;
+const L = (s) => s.split(" ").map(p => [LABELS.indexOf(p[0]), LABELS.indexOf(p[1]), +p.slice(1).split("/")[1]]);
+// letter pairs with weight encoded as X/Yw? simpler: build manually below
+
+const GRAPHS = {
+  g1: {
+    name: "Graph 1", n: 6,
+    pos: { A:[60,180], B:[175,70], C:[175,290], D:[315,180], E:[430,80], F:[455,285] },
+    edges: [["A","B",4],["A","C",2],["C","B",1],["B","D",5],["C","D",8],["C","E",10],["D","E",2],["D","F",6],["E","F",3]],
+  },
+  g2: {
+    name: "Graph 2", n: 5,
+    pos: { A:[70,180], B:[220,75], C:[220,285], D:[370,180], E:[475,180] },
+    edges: [["A","B",1],["A","C",4],["B","C",2],["B","D",5],["C","D",1],["D","E",3],["B","E",9]],
+  },
+};
+
+function resolveGraph(g){
+  const idx = {}; Object.keys(g.pos).forEach((k) => (idx[k] = LABELS.indexOf(k)));
+  const pos = Array.from({ length: g.n }, (_, i) => g.pos[LABELS[i]]);
+  const edges = g.edges.map(([a, b, w]) => [LABELS.indexOf(a), LABELS.indexOf(b), w]);
+  return { n: g.n, name: g.name, pos, edges };
+}
+
+function randomGraph(seed){
+  const rng = mulberry32(seed);
+  const n = 6 + Math.floor(rng() * 3); // 6..8
+  const cx = 260, cy = 178, rx = 205, ry = 128;
+  const pos = Array.from({ length: n }, (_, i) => {
+    const t = -Math.PI / 2 + (2 * Math.PI * i) / n;
+    return [Math.round(cx + rx * Math.cos(t)), Math.round(cy + ry * Math.sin(t))];
+  });
+  const seen = new Set(), edges = [];
+  const add = (u, v, w) => { const k = u + "-" + v; if (u !== v && !seen.has(k)) { seen.add(k); edges.push([u, v, w]); } };
+  for (let i = 1; i < n; i++) add(Math.floor(rng() * i), i, 1 + Math.floor(rng() * 9)); // reachable from A
+  const extra = n;
+  for (let e = 0; e < extra; e++) add(Math.floor(rng() * n), Math.floor(rng() * n), 1 + Math.floor(rng() * 9));
+  return { n, name: "Random", pos, edges };
+}
+
+function buildAdj(n, edges){
+  const adj = Array.from({ length: n }, () => []);
+  for (const [u, v, w] of edges) adj[u].push({ v, w });
+  adj.forEach((l) => l.sort((a, b) => a.v - b.v));
+  return adj;
+}
+
+/* ------------------------------------------------------------- simulators */
+function genDijkstra(n, adj){
+  const dist = Array(n).fill(Infinity), pred = Array(n).fill(null), visited = Array(n).fill(false);
+  dist[0] = 0;
+  const steps = [];
+  const frontier = () => { const f = []; for (let v = 0; v < n; v++) if (!visited[v] && dist[v] !== Infinity) f.push(v); f.sort((a, b) => dist[a] - dist[b] || a - b); return f; };
+  const snap = (o) => steps.push({ dist: dist.slice(), pred: pred.slice(), done: visited.slice(), frontier: frontier(), ...o });
+
+  snap({ phase: "start", cur: null, edge: null, msg: `Start at ${nm(0)}. dist[${nm(0)}] = 0, every other node is ${fmt(Infinity)}. Pick the unvisited node with smallest dist each round.` });
+  while (true){
+    let u = -1, best = Infinity;
+    for (let v = 0; v < n; v++) if (!visited[v] && dist[v] < best) { best = dist[v]; u = v; }
+    if (u === -1) break;
+    visited[u] = true;
+    snap({ phase: "extract", cur: u, edge: null, msg: `Extract-min: ${nm(u)} has the smallest dist (${dist[u]}) among unvisited nodes. Its shortest path is now final. Relax its out-edges.` });
+    for (const { v, w } of adj[u]){
+      const nd = dist[u] + w;
+      if (nd < dist[v]){
+        const old = dist[v];
+        dist[v] = nd; pred[v] = u;
+        snap({ phase: "relax", cur: u, edge: [u, v], res: "update", msg: `Relax ${nm(u)}→${nm(v)} (${w}): dist[${nm(u)}] + ${w} = ${nd} < dist[${nm(v)}] = ${fmt(old)}. Update dist[${nm(v)}] = ${nd}, pred[${nm(v)}] = ${nm(u)}.` });
+      } else {
+        snap({ phase: "relax", cur: u, edge: [u, v], res: "noupdate", msg: `Relax ${nm(u)}→${nm(v)} (${w}): dist[${nm(u)}] + ${w} = ${nd} is not below dist[${nm(v)}] = ${fmt(dist[v])}. No update.` });
+      }
+    }
+  }
+  snap({ phase: "done", cur: null, edge: null, msg: `Done. Every reachable node's dist is finalized. The green pred-edges form the shortest-path tree from ${nm(0)}.` });
+  return steps;
+}
+
+function genBFS(n, adj){
+  const dist = Array(n).fill(Infinity), pred = Array(n).fill(null), done = Array(n).fill(false);
+  dist[0] = 0;
+  const queue = [0];
+  const steps = [];
+  const snap = (o) => steps.push({ dist: dist.slice(), pred: pred.slice(), done: done.slice(), frontier: queue.slice(), ...o });
+
+  snap({ phase: "start", cur: null, edge: null, msg: `BFS treats every edge as weight 1, so dist = number of edges. Start ${nm(0)} on the queue with dist 0.` });
+  while (queue.length){
+    const u = queue.shift();
+    done[u] = true;
+    snap({ phase: "extract", cur: u, edge: null, msg: `Dequeue ${nm(u)} (dist ${dist[u]}). Scan its out-edges; any unseen neighbor joins the back of the queue.` });
+    for (const { v } of adj[u]){
+      if (dist[v] === Infinity){
+        dist[v] = dist[u] + 1; pred[v] = u; queue.push(v);
+        snap({ phase: "relax", cur: u, edge: [u, v], res: "update", msg: `${nm(u)}→${nm(v)}: ${nm(v)} is unseen. Set dist[${nm(v)}] = ${dist[v]}, pred[${nm(v)}] = ${nm(u)}, enqueue ${nm(v)}.` });
+      } else {
+        snap({ phase: "relax", cur: u, edge: [u, v], res: "noupdate", msg: `${nm(u)}→${nm(v)}: ${nm(v)} was already seen (dist ${dist[v]}). Its dist never updates again. Skip.` });
+      }
+    }
+  }
+  snap({ phase: "done", cur: null, edge: null, msg: `Done. Nodes came out in level-sets: all dist-1 nodes, then all dist-2, and so on.` });
+  return steps;
+}
+
+/* ------------------------------------------------------------- pseudocode */
+const CODE = [
+  "give every node a dist of infinity; the start alone begins at 0",
+  "no node has a pred yet",
+  "repeat until every reachable node has been popped:",
+  "    pop the unvisited node whose dist is smallest",
+  "    that dist is now final - no later step can shorten it",
+  "    for each edge leaving the popped node:",
+  "        would going through it beat the neighbor's current dist?",
+  "        if yes: write the smaller dist, and point the neighbor's pred here",
+  "when every node is popped, dist and pred trace out all shortest paths",
+];
+const HILITE = { start: [0, 1], extract: [3, 4], relaxUpdate: [6, 7], relaxNoupdate: [6], done: [8] };
+
+const BFS_CODE = [
+  "BFS is the same loop with every edge counting as 1",
+  "a plain queue stands in for the heap - oldest entry at the front",
+  "dequeue the front node; its dist (an edge count) is already settled",
+  "a neighbor still at infinity gets dist + 1, a pred, and a spot in line",
+  "a neighbor seen before is skipped - its dist never changes again",
+  "an empty queue means every reachable node knows its level",
+];
+const BFS_HILITE = { start: [0, 1], extract: [2], relaxUpdate: [3], relaxNoupdate: [4], done: [5] };
+
+/* ------------------------------------------------------------- dom helpers */
+function h(tag, props, kids){ return mk(null, tag, props, kids); }
+function S(tag, props, kids){ return mk("http://www.w3.org/2000/svg", tag, props, kids); }
+function mk(ns, tag, props, kids){
+  const e = ns ? document.createElementNS(ns, tag) : document.createElement(tag);
+  props = props || {};
+  for (const k in props){
+    const v = props[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "style" && typeof v === "object") Object.assign(e.style, v);
+    else if (k === "class") e.setAttribute("class", v);
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(kids) ? kids : [kids]).forEach(function push(c){
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(push); return; }
+    e.appendChild(c.nodeType ? c : document.createTextNode(String(c)));
+  });
+  return e;
+}
+
+/* ------------------------------------------------------------- state */
+const state = { graphKey: "g1", seed: 7, mode: "dijkstra", idx: 0, playing: false, speed: 4 };
+let cache = { key: null, graph: null, steps: null };
+let playTimer = null;
+
+function currentGraph(){
+  if (state.graphKey === "random") return randomGraph(state.seed);
+  return resolveGraph(GRAPHS[state.graphKey]);
+}
+function ensure(){
+  const key = state.graphKey + "|" + state.seed + "|" + state.mode;
+  if (cache.key === key) return cache;
+  const graph = currentGraph();
+  const adj = buildAdj(graph.n, graph.edges);
+  const steps = (state.mode === "bfs" ? genBFS : genDijkstra)(graph.n, adj);
+  cache = { key, graph, steps };
+  return cache;
+}
+function reset(){ state.idx = 0; state.playing = false; }
+
+/* ------------------------------------------------------------- render */
+function edgeColor(u, v, st){
+  if (st.edge && st.edge[0] === u && st.edge[1] === v) return C.amber;
+  if (st.pred[v] === u) return C.green;
+  return C.edge;
+}
+function hasEdge(edges, a, b){ return edges.some(e => e[0] === a && e[1] === b); }
+
+function render(){
+  if (playTimer){ clearTimeout(playTimer); playTimer = null; }
+  const { graph, steps } = ensure();
+  if (state.idx > steps.length - 1) state.idx = steps.length - 1;
+  if (state.idx < 0) state.idx = 0;
+  const st = steps[state.idx];
+  const atEnd = state.idx >= steps.length - 1;
+
+  if (state.playing){
+    if (atEnd) state.playing = false;
+    else playTimer = setTimeout(() => { state.idx += 1; render(); }, 1050 - state.speed * 90);
+  }
+
+  const pos = graph.pos;
+
+  /* ---- graph svg ---- */
+  const edgeEls = [];
+  graph.edges.forEach(([u, v, w]) => {
+    const p = pos[u], q = pos[v];
+    let dx = q[0] - p[0], dy = q[1] - p[1]; const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len, pxx = -uy, pyy = ux;
+    const off = hasEdge(graph.edges, v, u) ? 7 : 0;
+    const sx = p[0] + ux * R + pxx * off, sy = p[1] + uy * R + pyy * off;
+    const ex = q[0] - ux * (R + 17) + pxx * off, ey = q[1] - uy * (R + 17) + pyy * off;
+    const col = edgeColor(u, v, st);
+    const isCur = st.edge && st.edge[0] === u && st.edge[1] === v;
+    const isTree = st.pred[v] === u;
+    const wgt = isCur || isTree ? 3 : 2;
+    const ang = Math.atan2(ey - sy, ex - sx) * 180 / Math.PI;
+    const mx = (sx + ex) / 2 + pxx * 12, my = (sy + ey) / 2 + pyy * 12;
+    edgeEls.push(S("g", {}, [
+      S("line", { x1: sx, y1: sy, x2: ex, y2: ey, stroke: col, "stroke-width": wgt, "stroke-linecap": "round" }),
+      S("polygon", { points: "0,-8 18,0 0,8", fill: col, transform: `translate(${ex},${ey}) rotate(${ang})` }),
+      S("rect", { x: mx - 11, y: my - 10, width: 22, height: 18, rx: 4, fill: C.bg, stroke: col, "stroke-width": 1, opacity: state.mode === "bfs" ? 0.35 : 1 }),
+      S("text", { x: mx, y: my + 4, "text-anchor": "middle", "font-size": 12, "font-family": "ui-monospace, monospace", fill: isCur || isTree ? col : C.mute, opacity: state.mode === "bfs" ? 0.4 : 1 }, String(w)),
+    ]));
+  });
+  const nodeEls = pos.map((p, v) => {
+    const finalized = st.done[v];
+    const cur = st.cur === v && st.phase === "extract";
+    const inFrontier = st.frontier.includes(v);
+    const reached = st.dist[v] !== Infinity;
+    const fill = finalized ? C.green : reached ? C.tile : C.fill;
+    const stroke = cur ? C.amber : inFrontier ? C.blue : finalized ? C.green : C.outside;
+    const sw = cur ? 3.5 : inFrontier ? 2.5 : 1.8;
+    return S("g", {}, [
+      inFrontier && !finalized ? S("circle", { cx: p[0], cy: p[1], r: R + 5, fill: "none", stroke: C.blue, "stroke-width": 1, opacity: 0.35 }) : null,
+      S("circle", { cx: p[0], cy: p[1], r: R, fill, stroke, "stroke-width": sw }),
+      S("text", { x: p[0], y: p[1] + 5, "text-anchor": "middle", "font-size": 15, "font-weight": 700, "font-family": "ui-monospace, monospace", fill: finalized ? C.onDark : reached ? C.ink : C.mute }, nm(v)),
+      S("text", { x: p[0], y: p[1] + R + 15, "text-anchor": "middle", "font-size": 11.5, "font-family": "ui-monospace, monospace", fill: C.mute }, "d=" + fmt(st.dist[v])),
+    ]);
+  });
+  const svg = S("svg", { viewBox: `0 0 ${VW} ${VH}`, class: "graph" }, [...edgeEls, ...nodeEls]);
+
+  const legend = h("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px 14px", fontSize: "12px", color: C.mute, marginTop: "4px" } }, [
+    legItem(C.amber, "current node / edge"),
+    legItem(C.blue, state.mode === "bfs" ? "in the queue" : "reached, not yet finalized"),
+    legItem(C.green, "finalized (dist settled)"),
+    h("span", {}, "green edges = shortest-path tree"),
+  ]);
+
+  /* ---- toolbar ---- */
+  const gButton = (key, label) => h("button", { class: "btn",
+    style: { borderColor: state.graphKey === key ? C.blue : C.line, background: state.graphKey === key ? C.blue : C.panel, color: state.graphKey === key ? C.onDark : C.ink },
+    onclick: () => { state.graphKey = key; cache.key = null; reset(); render(); } }, label);
+  const modeButton = (key, label) => h("button", { class: "btn",
+    style: { borderColor: state.mode === key ? C.green : C.line, background: state.mode === key ? C.green : C.panel, color: state.mode === key ? C.onDark : C.ink },
+    onclick: () => { state.mode = key; cache.key = null; reset(); render(); } }, label);
+
+  const toolbar = h("div", { class: "panel", style: { padding: "10px", marginBottom: "12px", display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" } }, [
+    gButton("g1", "Graph 1"), gButton("g2", "Graph 2"),
+    h("button", { class: "btn", style: { borderColor: state.graphKey === "random" ? C.blue : C.line, background: state.graphKey === "random" ? C.blue : C.panel, color: state.graphKey === "random" ? C.onDark : C.ink },
+      onclick: () => { if (state.graphKey === "random") state.seed = Math.floor(Math.random() * 99999); state.graphKey = "random"; cache.key = null; reset(); render(); } }, "Random"),
+    h("span", { style: { width: "1px", height: "22px", background: C.line, margin: "0 2px" } }),
+    h("span", { class: "lbl" }, "mode"),
+    modeButton("dijkstra", "Dijkstra"), modeButton("bfs", "BFS"),
+  ]);
+
+  /* ---- controls ---- */
+  const controls = h("div", { class: "panel", style: { padding: "12px", marginTop: "12px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" } }, [
+    h("button", { class: "btn", style: { borderColor: C.blue, background: C.blue, color: C.onDark }, disabled: atEnd ? "disabled" : null,
+      onclick: () => { if (state.playing) { state.playing = false; render(); return; } if (atEnd) state.idx = 0; state.playing = true; render(); } }, state.playing ? "Pause" : "Play"),
+    h("button", { class: "btn", disabled: atEnd ? "disabled" : null, onclick: () => { state.playing = false; state.idx += 1; render(); } }, "Step →"),
+    h("button", { class: "btn", disabled: state.idx === 0 ? "disabled" : null, onclick: () => { state.playing = false; state.idx -= 1; render(); } }, "← Back"),
+    h("button", { class: "btn", onclick: () => { state.playing = false; state.idx = 0; render(); } }, "Reset"),
+    h("button", { class: "btn", onclick: () => { state.seed = Math.floor(Math.random() * 99999); state.graphKey = "random"; cache.key = null; reset(); render(); } }, "New graph"),
+    h("span", { class: "lbl", style: { marginLeft: "6px" } }, "Speed"),
+    h("input", { type: "range", min: "1", max: "10", value: String(state.speed), style: { width: "110px" }, oninput: (e) => { state.speed = +e.target.value; } }),
+    h("span", { style: { fontSize: "12px", color: C.mute, marginLeft: "auto" }, class: "mono" }, "step " + (state.idx + 1) + " / " + steps.length),
+  ]);
+
+  /* ---- message ---- */
+  const message = h("div", { class: "panel", style: { padding: "12px", marginTop: "12px", minHeight: "58px", fontSize: "14px", color: C.ink, display: "flex", alignItems: "center" } }, st.msg);
+
+  /* ---- pseudocode panel ---- */
+  const isBFS = state.mode === "bfs";
+  const codeLines = isBFS ? BFS_CODE : CODE;
+  const hmap = isBFS ? BFS_HILITE : HILITE;
+  const hkey = st.phase === "relax" ? (st.res === "update" ? "relaxUpdate" : "relaxNoupdate") : st.phase;
+  const lit = hmap[hkey] || [];
+  const codePanel = h("div", { class: "panel", style: { padding: "12px", marginTop: "12px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "8px" } }, isBFS ? "The algorithm in words - BFS variant" : "The algorithm in words"),
+    h("div", { class: "mono", style: { fontSize: "12.5px", lineHeight: "1.75", overflowX: "auto" } },
+      codeLines.map((l, k) => {
+        const on = lit.includes(k);
+        return h("div", { style: { whiteSpace: "pre", padding: "1px 8px",
+          background: on ? "rgba(240,167,60,0.14)" : "transparent",
+          borderLeft: "3px solid " + (on ? "#F0A73C" : "transparent"),
+          color: on ? C.amber : C.code, fontWeight: on ? 600 : 400 } }, l);
+      })),
+  ]);
+
+  /* ---- table + frontier ---- */
+  const table = h("div", { class: "panel", style: { padding: "12px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "6px" } }, "dist / pred table"),
+    h("table", { class: "mono" }, [
+      h("thead", {}, h("tr", {}, [h("th", { class: "l" }, "node"), h("th", {}, "dist"), h("th", {}, "pred")])),
+      h("tbody", {}, Array.from({ length: graph.n }, (_, v) => {
+        const isCur = st.cur === v;
+        const settled = st.done[v];
+        return h("tr", { style: { background: isCur ? "rgba(240,167,60,0.12)" : "transparent" } }, [
+          h("td", { class: "l", style: { color: settled ? C.green : C.ink, fontWeight: 700 } }, nm(v)),
+          h("td", { style: { color: st.dist[v] === Infinity ? C.mute : C.ink } }, fmt(st.dist[v])),
+          h("td", { style: { color: C.mute } }, st.pred[v] === null ? "·" : nm(st.pred[v])),
+        ]);
+      })),
+    ]),
+  ]);
+
+  // The course's not_visited holds every unvisited node, including the ∞ ones.
+  // The panel shows them all; the simulator's pop logic is unchanged.
+  const infNodes = state.mode === "bfs" ? [] :
+    Array.from({ length: graph.n }, (_, v) => v).filter((v) => !st.done[v] && st.dist[v] === Infinity);
+  const chips = st.frontier.length === 0 && infNodes.length === 0
+    ? [h("span", { style: { color: C.mute, fontSize: "13px" } }, "empty")]
+    : st.frontier.map((v, i) => h("span", { class: "mono", style: { padding: "4px 8px", borderRadius: "6px", fontSize: "13px",
+        border: "1px solid " + (i === 0 ? C.blue : C.line), background: i === 0 ? "rgba(91,141,239,0.16)" : C.tile,
+        color: i === 0 ? C.blue : C.code, fontWeight: i === 0 ? 700 : 500 } }, nm(v) + ": " + fmt(st.dist[v])))
+      .concat(infNodes.map((v) => h("span", { class: "mono", style: { padding: "4px 8px", borderRadius: "6px", fontSize: "13px",
+        border: "1px dashed " + C.line, background: "transparent", color: C.mute, opacity: "0.55" } }, nm(v) + ": ∞")));
+  const frontier = h("div", { class: "panel", style: { padding: "12px" } }, [
+    h("div", { class: "lbl", style: { marginBottom: "6px" } }, state.mode === "bfs" ? "Queue (front on the left)" : "Priority queue - every unvisited node (smallest dist first)"),
+    h("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px", minHeight: "34px" } }, chips),
+    h("div", { style: { fontSize: "12px", color: C.mute, marginTop: "8px" } },
+      state.mode === "bfs"
+        ? "BFS = Dijkstra with every weight 1. A queue replaces the heap; a node is enqueued the moment its dist leaves infinity, and never changes again."
+        : "Each round pops the smallest-dist unvisited node, whose shortest path is then final, and relaxes its out-edges. Needs non-negative weights. The dimmed ∞ chips sit in the structure too - exactly like the reference sheet's not_visited, which starts as the set of all nodes."),
+  ]);
+
+  /* ---- assemble ---- */
+  const header = h("div", { style: { marginBottom: "16px" } }, [
+    h("h1", {}, "Dijkstra's"),
+    h("p", { class: "sub" }, "Single-source shortest paths from A. Pop the closest unvisited node, relax its out-edges, repeat. Toggle BFS to run the same graph unweighted."),
+  ]);
+  const graphPanel = h("div", { class: "panel", style: { padding: "10px 12px 12px" } }, [svg, legend]);
+  const wrap = h("div", { class: "wrap" }, [
+    header, toolbar, graphPanel, controls, message, codePanel,
+    h("div", { class: "grid2", style: { marginTop: "12px" } }, [table, frontier]),
+  ]);
+
+  const root = document.getElementById("root");
+  root.textContent = "";
+  root.appendChild(wrap);
+}
+
+function legItem(color, label){
+  return h("span", { style: { display: "flex", alignItems: "center", gap: "5px" } }, [
+    h("span", { style: { width: "10px", height: "10px", borderRadius: "3px", background: color, display: "inline-block" } }), label,
+  ]);
+}
+
+if (typeof window !== "undefined" && window.addEventListener){
+  window.addEventListener("keydown", (e) => {
+    if (e.target && e.target.tagName === "INPUT") return;
+    if (e.key === "ArrowRight"){ e.preventDefault(); state.playing = false; const { steps } = ensure(); if (state.idx < steps.length - 1) state.idx += 1; render(); }
+    if (e.key === "ArrowLeft"){ e.preventDefault(); state.playing = false; if (state.idx > 0) state.idx -= 1; render(); }
+  });
+}
+
+render();
+</script>
+</body>
+</html>
